@@ -1,0 +1,36 @@
+[project]
+name = "py-agent-worker"
+version = "0.1.0"
+description = "Python agent worker for origin"
+requires-python = ">=3.10"
+dependencies = [
+  # web / server
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.29.0",
+
+  # http
+  "httpx[http2]>=0.27.0",
+
+  # langchain / agent
+  "langchain-core>=0.3.0",
+  "langchain-openai>=0.1.6",  
+  "langchain-google-genai>=1.0.0",
+  "langgraph>=0.2.0",
+
+  # llm sdk
+  "openai>=2.15.0,<3",
+
+  # infra
+  "pydantic>=2.0.0",
+  "temporalio>=1.7.0",
+  "psycopg2-binary>=2.9.9",
+  "redis",
+  "beautifulsoup4",
+  "pandas",
+  "lxml",
+  "pymupdf",
+  "pytz"
+]
+
+[tool.uv]
+package = false

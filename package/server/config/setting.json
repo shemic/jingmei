@@ -1,0 +1,80 @@
+{
+  "log": {
+    "level": "info",
+    "encoding": "console",
+    "development": false,
+    "enabled": true,
+    "output": "stdout",
+    "successFile": "data/log/access.log",
+    "errorFile": "data/log/error.log"
+  },
+  "http": {
+    "host": "0.0.0.0",
+    "port": 8089,
+    "shutdownTimeout": "10s",
+    "appName": "精美AI",
+    "enableTuning": true,
+    "prefork": false,
+    "strictRouting": false,
+    "caseSensitive": false,
+    "reduceMemoryUsage": false,
+    "serverHeader": "work",
+    "bodyLimit": 8388608,
+    "concurrency": 262144,
+    "readTimeout": "0s",
+    "writeTimeout": "0s",
+    "idleTimeout": "0s"
+  },
+  "auth": {
+    "jwtSecret": "jingmei2026"
+  },
+  "qiniu": {
+    "accessKey": "test",
+    "secretKey": "test",
+    "bucket": "shemic",
+    "region": "z0",
+    "domain": "http://7ai.shemic.com/",
+    "callbackURL1": "qiniu/callback",
+    "callbackURL": "",
+    "tokenTTL": 3600
+  },
+  "database": {
+    "create": false,
+    "default": {
+      "driver1": "postgres",
+      "host1": "127.0.0.1:5433",
+      "user1": "app",
+      "pwd1": "app",
+      "dbname1": "app",
+      "prefix": "ai",
+      "maxOpenConns": 20,
+      "maxIdleConns": 10,
+      "connMaxLifetime": "300s",
+      "connMaxIdleTime": "120s",
+      "healthCheckPeriod": "5s"
+    }
+  },
+  "temporal": {
+    "hostPort": "127.0.0.1:7233",
+    "namespace": "default",
+    "workflowQueue": "WORKFLOW_QUEUE",
+    "llmQueue": "LLM_TASK_QUEUE",
+    "toolsQueue": "TOOLS_TASK_QUEUE"
+  },
+  "redis": {
+    "enable": true,
+    "addr": "127.0.0.1:6379",
+    "username": "",
+    "password": "",
+    "db": 0,
+    "prefix": "jingmei",
+    "poolSize": 100,
+    "minIdleConns": 20,
+    "maxRetries": 3,
+    "dialTimeout": "2s",
+    "readTimeout": "10s",
+    "writeTimeout": "1s",
+    "pingTimeout": "1s",
+    "useTLS": false
+  }
+}
