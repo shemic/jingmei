@@ -3,6 +3,7 @@ Dever::db('shenzhu/session');
 Dever::db('shenzhu/message');
 return [
     'list' => [
+        'desc' => '注意：这里修改后，需要重启opencode服务器或者openclaw服务器才能生效',
         'field'      => [
             'code',
             'name',
