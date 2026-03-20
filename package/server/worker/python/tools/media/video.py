@@ -413,4 +413,16 @@ class Video(Base):
             parsed = self._parse_bool(out.get(key))
             if parsed is not None:
                 out[key] = parsed
+        if "duration" in out:
+            raw_duration = str(out.get("duration", "")).strip()
+            if raw_duration:
+                try:
+                    out["duration"] = int(float(raw_duration))
+                except Exception:
+                    pass
+        if "radio" in out and "ratio" not in out:
+            ratio_value = str(out.get("radio", "")).strip()
+            if ratio_value:
+                out["ratio"] = ratio_value
+        out.pop("radio", None)
         return out
