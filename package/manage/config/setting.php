@@ -22,6 +22,7 @@ return [
         'audio' => '音频',
         'doc' => '文档',
         'rich' => '富媒体',
+        'chat' => '对话',
     ],
 
     # 调试的shell名

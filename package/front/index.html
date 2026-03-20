@@ -1,23 +1,40 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>神创 | 始于心动 · 成于行动 - AI内容创作平台，神秘城旗下内容创作平台</title>
-    <script>
-      (() => {
-        try {
-          const t = localStorage.getItem("theme") || "light";
-          document.documentElement.setAttribute("data-theme", t);
-        } catch (e) {
-          document.documentElement.setAttribute("data-theme", "light");
-        }
-      })();
-    </script>
-    <script type="module" crossorigin src="/assets/index-CD6FnDYQ.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-C5axxpnH.css">
-  </head>
-  <body>
-    <div id="app"></div>
-  </body>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JSTYLE AI | AI内容创作平台</title>
+  <script>
+    (() => {
+      try {
+        const t = localStorage.getItem("theme") || "light";
+        document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "light");
+      }
+    })();
+  </script>
+  <script>
+    (function () {
+      var shouldEnableFeishuDebug =
+        window.location.search.indexOf('__feishu_debug__=1') >= 0 ||
+        window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1';
+
+      if (!shouldEnableFeishuDebug) return;
+
+      var script = document.createElement('script');
+      script.src = 'https://lf-package-cn.feishucdn.com/obj/feishu-static/op/fe/devtools_frontend/remote-debug-0.0.1-alpha.6.js';
+      document.head.appendChild(script);
+    })();
+  </script>
+  <script type="module" crossorigin src="/assets/index-CI_TOyAS.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-T62p6b-r.css">
+</head>
+
+<body>
+  <div id="app"></div>
+</body>
+
 </html>

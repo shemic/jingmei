@@ -30,6 +30,12 @@ return [
             'type'      => 'bigint',
             'value'     => 'user/content_version',
         ],
+        'type' => [
+            'name'      => '类型',
+            'type'      => 'varchar(20)',
+            'default'   => 'text',
+            'value'     => Dever::config('setting')['content'],
+        ],
         'search' => [
             'name'      => '筛选项',
             'type'      => 'jsonb',

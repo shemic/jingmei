@@ -75,7 +75,7 @@ return [
             'password' => [
                 'type' => 'password',
                 'update' => '',
-                'handle' => 'Manage/Lib/Util.createUserPwd',
+                'handle' => 'Manage/Lib/Util.createPwd',
                 'empty'  => false,
                 'rules'     => [
                     [

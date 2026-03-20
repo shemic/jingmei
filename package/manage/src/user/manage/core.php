@@ -23,6 +23,26 @@ return [
             'sort'      => '1',
         ],
 
+        'msg' => [
+            'parent'    => 'user_manage',
+            'name'      => '消息列表',
+            'icon'      => 'shopping-cart-line',
+            'sort'      => '2',
+        ],
+
+        'help' => [
+            'parent'    => 'user_manage',
+            'name'      => '帮助文档',
+            'icon'      => 'question-line',
+            'sort'      => '3',
+        ],
+        'help_cate' => [
+            'parent'    => 'user_manage',
+            'name'      => '帮助分类',
+            'sort'      => '100',
+            'show'      => '3',
+        ],
+        /*
         'project' => [
             'parent'    => 'user_manage',
             'name'      => '项目列表',
@@ -49,6 +69,6 @@ return [
             'name'      => '运行记录节点',
             'sort'      => '100',
             'show'      => '3',
-        ],
+        ],*/
     ],
 ];

@@ -37,5 +37,26 @@ return [
             'sort'      => '100',
             'show'      => '3',
         ],
+
+        'template' => [
+            'parent'    => 'service_manage',
+            'name'      => '业务模板',
+            'icon'      => 'earth-line',
+            'sort'      => '2',
+        ],
+
+        'template_cate' => [
+            'parent'    => 'service_manage',
+            'name'      => '业务模板分类',
+            'sort'      => '100',
+            'show'      => '3',
+        ],
+
+        'template_data' => [
+            'parent'    => 'service_manage',
+            'name'      => '业务模板数据',
+            'sort'      => '100',
+            'show'      => '3',
+        ],
     ],
 ];

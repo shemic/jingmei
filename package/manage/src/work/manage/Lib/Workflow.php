@@ -26,6 +26,7 @@ class Workflow
     {
         $result = [];
         $result[] = ['id' => 1, 'name' => '业务应用'];
+        $result[] = ['id' => 2, 'name' => '业务模板'];
 
         $where = ['status' => 1];
         foreach ($result as $k => $v) {
@@ -40,6 +41,16 @@ class Workflow
                         if ($data) {
                             $v1['children'] = $data;
                         }
+                        $result[$k]['children'][$i] = $v1;
+                        $i++;
+                    }
+                }
+            } else if ($v['id'] == 2) {
+                $result[$k]['children'] = [];
+                $service = Dever::db('service/template')->select($where, ['col' => 'id,name']);
+                if ($service) {
+                    $i = 0;
+                    foreach ($service as $k1 => $v1) {
                         $result[$k]['children'][$i] = $v1;
                         $i++;
                     }
