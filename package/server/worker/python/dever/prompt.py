@@ -57,7 +57,7 @@ class Prompt:
 
         prompt_text = str(input_data.get("prompt", input_data.get("input", "")) or "")
         option = input_data.get("option")
-        out_option: Dict[str, Any] = option if isinstance(option, dict) else {}
+        out_option: Dict[str, Any] = Prompt._normalize_option(dict(option) if isinstance(option, dict) else {})
         wanted = Prompt._wanted(extract_types)
         file_raw = Prompt._resolve_file_raw(input_data)
 
@@ -242,6 +242,26 @@ class Prompt:
             right = Prompt._vals(v)
             merged[k] = Prompt._uniq(left + right)
         return merged
+
+    @staticmethod
+    def _normalize_option(option: Dict[str, Any]) -> Dict[str, Any]:
+        if not option:
+            return {}
+
+        out = dict(option)
+        size_raw = str(out.get("size", "") or "").strip().lower()
+        cc_raw = str(out.get("cc", "") or "").strip()
+        if size_raw and cc_raw:
+            size_match = re.fullmatch(r"(\d+)\s*x\s*(\d+)", size_raw)
+            cc_match = re.fullmatch(r"\d+(?:\.\d+)?", cc_raw)
+            if size_match and cc_match:
+                width = int(size_match.group(1))
+                height = int(size_match.group(2))
+                factor = float(cc_raw)
+                if factor > 0:
+                    out["size"] = f"{int(width * factor)}x{int(height * factor)}"
+        out.pop("cc", None)
+        return out
 
     @staticmethod
     def _attrs(raw: str) -> Dict[str, str]:
