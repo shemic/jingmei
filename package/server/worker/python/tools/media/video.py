@@ -3,6 +3,7 @@ from __future__ import annotations
 import random
 import time
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
 
@@ -152,8 +153,15 @@ class Video(Base):
         image_urls: List[str] = []
         if isinstance(file_data, list):
             image_urls = [str(x).strip() for x in file_data if str(x).strip()]
+        elif isinstance(file_data, dict):
+            raw_images = file_data.get("image")
+            if isinstance(raw_images, list):
+                image_urls = [str(x).strip() for x in raw_images if str(x).strip()]
+            elif isinstance(raw_images, str) and raw_images.strip():
+                image_urls = [raw_images.strip()]
         if not image_urls:
             raise WorkerError("图生视频缺少图片地址（option.image_url 或 file.image）")
+        image_urls = self._normalize_image_urls_for_video(image_urls)
 
         content: List[Dict[str, Any]] = [{"type": "text", "text": prompt_raw}]
         model_name = (model or "").lower()
@@ -197,6 +205,35 @@ class Video(Base):
         payload: Dict[str, Any] = {"model": model, "content": content, "watermark": False}
         payload.update(option)
         return payload
+
+    def _normalize_image_urls_for_video(self, image_urls: List[str]) -> List[str]:
+        cleaned = [str(url).strip() for url in image_urls if str(url).strip()]
+        if not cleaned:
+            return []
+        content_code = str(self.config.get("content_code", "")).strip()
+        if not content_code:
+            return cleaned
+
+        qiniu = Qiniu()
+        qiniu_host = urlparse(qiniu.domain if str(qiniu.domain).startswith("http") else f"https://{qiniu.domain}").netloc.lower()
+        normalized: List[str] = []
+        for idx, raw in enumerate(cleaned):
+            parsed = urlparse(raw)
+            host = parsed.netloc.lower()
+            if qiniu_host and host == qiniu_host:
+                normalized.append(raw)
+                continue
+            if raw.startswith("data:"):
+                raise WorkerError("图生视频暂不支持 data URI 图片，请先上传图片")
+            stored = qiniu.upload(
+                source_url=raw,
+                content_code=content_code,
+                prefix="user_upload",
+                file_type="user_upload",
+                index=idx,
+            )
+            normalized.append(str(stored.get("url", "")).strip() or raw)
+        return normalized
 
     def _poll_task(
         self,
