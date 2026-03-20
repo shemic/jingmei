@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -22,6 +23,7 @@ SKIP: Set[str] = {"text", "rich"}
 
 TAG_RE = re.compile(r"(?is)<shemic-(quote|file)\b([^>]*)>(.*?)</shemic-\1>")
 ATTR_RE = re.compile(r"([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*([\"'])(.*?)\2", re.S)
+MAX_IMAGE_PIXELS = 16_777_216
 
 
 class Prompt:
@@ -259,9 +261,33 @@ class Prompt:
                 height = int(size_match.group(2))
                 factor = float(cc_raw)
                 if factor > 0:
-                    out["size"] = f"{int(width * factor)}x{int(height * factor)}"
+                    scaled_width = int(width * factor)
+                    scaled_height = int(height * factor)
+                    scaled_width, scaled_height = Prompt._fit_size_to_max_pixels(scaled_width, scaled_height)
+                    out["size"] = f"{scaled_width}x{scaled_height}"
         out.pop("cc", None)
         return out
+
+    @staticmethod
+    def _fit_size_to_max_pixels(width: int, height: int) -> Tuple[int, int]:
+        if width <= 0 or height <= 0:
+            return width, height
+        pixels = width * height
+        if pixels <= MAX_IMAGE_PIXELS:
+            return width, height
+
+        ratio = math.sqrt(MAX_IMAGE_PIXELS / float(pixels))
+        next_width = max(1, int(width * ratio))
+        next_height = max(1, int(height * ratio))
+
+        while next_width * next_height > MAX_IMAGE_PIXELS:
+            if next_width >= next_height and next_width > 1:
+                next_width -= 1
+            elif next_height > 1:
+                next_height -= 1
+            else:
+                break
+        return next_width, next_height
 
     @staticmethod
     def _attrs(raw: str) -> Dict[str, str]:
