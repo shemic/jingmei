@@ -159,16 +159,15 @@ class Video(Base):
                 image_urls = [str(x).strip() for x in raw_images if str(x).strip()]
             elif isinstance(raw_images, str) and raw_images.strip():
                 image_urls = [raw_images.strip()]
-        if not image_urls:
-            raise WorkerError("图生视频缺少图片地址（option.image_url 或 file.image）")
-        image_urls = self._normalize_image_urls_for_video(image_urls)
+        if image_urls:
+            image_urls = self._normalize_image_urls_for_video(image_urls)
 
         content: List[Dict[str, Any]] = [{"type": "text", "text": prompt_raw}]
         model_name = (model or "").lower()
         is_seedance_15_pro = "doubao-seedance-1-5-pro" in model_name
         total = len(image_urls)
 
-        # 1 张图：首帧；2 张图：首尾帧；>2 张图：普通模型附带参考图，1.5-pro 仅保留首尾帧
+        # 有图时：1 张图首帧；2 张图首尾帧；>2 张图普通模型附带参考图，1.5-pro 仅保留首尾帧
         if total == 1:
             content.append(
                 {
