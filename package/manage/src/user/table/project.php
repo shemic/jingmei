@@ -5,7 +5,7 @@ return [
     'struct' => [
         'name' => [
             'name'      => '名称',
-            'type'      => 'varchar(200)',
+            'type'      => 'varchar(256)',
         ],
         'code' => [
             'name'      => '标识',
