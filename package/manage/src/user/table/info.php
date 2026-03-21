@@ -50,6 +50,10 @@ return [
             'name'      => '签名',
             'type'      => 'varchar(300)',
         ],
+        'openid' => [
+            'name'      => 'OpenID',
+            'type'      => 'varchar(300)',
+        ],
         'sex' => [
             'name'      => '性别',
             'type'      => 'tinyint(1)',
@@ -65,8 +69,8 @@ return [
             'type'      => 'tinyint(1)',
             'default'   => 2,
             'value'     => [
-                1 => '正式用户',
-                2 => '临时用户',
+                1 => '飞书登录',
+                2 => '后台录入',
             ],
         ],
         'status' => [

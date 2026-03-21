@@ -14,8 +14,12 @@ return [
         'field'      => [
             'id',
             'name',
+            'type' => [
+                //'type' => 'select',
+            ],
             'mobile' => [
                 //'sort' => true,
+                'show' => '{type} == 1 ? "-" : "{mobile}"',
             ],
             'status' => [
                 'type' => 'switch',
@@ -28,11 +32,11 @@ return [
         'height' => 'auto',
         
         'button' => [
-            '新增' => 'add',
+            '新增' => 'fastadd',
             //'删除' => 'recycle',
         ],
         'data_button' => [
-            '编辑' => 'edit',
+            '编辑' => ['fastedit', '', '', 'type=2'],
             //'删除' => 'delete',
         ],
         'export' => [
@@ -75,7 +79,7 @@ return [
             'password' => [
                 'type' => 'password',
                 'update' => '',
-                'handle' => 'Manage/Lib/Util.createUserPwd',
+                'handle' => 'Manage/Lib/Util.createPwd',
                 'empty'  => false,
                 'rules'     => [
                     [
