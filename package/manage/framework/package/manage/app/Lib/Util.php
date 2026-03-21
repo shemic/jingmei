@@ -215,14 +215,6 @@ class Util
         return $data;
     }
 
-    # 生成用户密码（与 Go 后端保持一致）
-    public function createUserPwd($password)
-    {
-        $data['salt'] = Str::salt(8);
-        $data['password'] = $this->hashUser($password, $data['salt']);
-        return $data;
-    }
-
     # 生成时间
     public function crateDate($date)
     {
@@ -231,12 +223,6 @@ class Util
 
     # hash加密
     public function hash($password, $salt)
-    {
-        return hash('sha256', $password . $salt);
-    }
-
-    # 用户密码 hash 加密（与 Go 后端保持一致）
-    public function hashUser($password, $salt)
     {
         return hash('sha256', $salt . $password);
     }
