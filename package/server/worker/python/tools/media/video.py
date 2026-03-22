@@ -16,6 +16,8 @@ from tools.media.base import Base
 
 class Video(Base):
     TASK_PATH = "/contents/generations/tasks"
+    MAX_RESULT_ITEMS = 20
+    MAX_RESULT_STRING = 2048
 
     def handle(self, input: Any, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if not isinstance(input, dict):
@@ -100,7 +102,7 @@ class Video(Base):
             return {
                 "task_id": task_id,
                 "status": self._extract_status(final_body) or "succeeded",
-                "result": final_body,
+                "result": self._sanitize_result(final_body),
                 "uploaded": uploaded,
                 "aigc": ",".join(aigc_urls),
             }
@@ -128,6 +130,7 @@ class Video(Base):
         file_data = prepared.get("file")
         if not isinstance(file_data, list) or not file_data:
             raise WorkerError("mention 模式缺少文件（file）")
+        file_data = self._normalize_mention_files_for_video(file_data)
 
         payload: Dict[str, Any] = {
             "model": model,
@@ -224,6 +227,36 @@ class Video(Base):
                 continue
             if raw.startswith("data:"):
                 raise WorkerError("图生视频暂不支持 data URI 图片，请先上传图片")
+            stored = qiniu.upload(
+                source_url=raw,
+                content_code=content_code,
+                prefix="user_upload",
+                file_type="user_upload",
+                index=idx,
+            )
+            normalized.append(str(stored.get("url", "")).strip() or raw)
+        return normalized
+
+    def _normalize_mention_files_for_video(self, files: List[str]) -> List[str]:
+        cleaned = [str(item).strip() for item in files if str(item).strip()]
+        if not cleaned:
+            return []
+
+        content_code = str(self.config.get("content_code", "")).strip()
+        qiniu = Qiniu()
+        qiniu_host = urlparse(qiniu.domain if str(qiniu.domain).startswith("http") else f"https://{qiniu.domain}").netloc.lower()
+        normalized: List[str] = []
+        for idx, raw in enumerate(cleaned):
+            parsed = urlparse(raw)
+            host = parsed.netloc.lower()
+            if qiniu_host and host == qiniu_host:
+                normalized.append(raw)
+                continue
+            if not content_code:
+                if raw.startswith("data:"):
+                    raise WorkerError("mention 模式缺少 content_code，无法上传 data URI 文件")
+                normalized.append(raw)
+                continue
             stored = qiniu.upload(
                 source_url=raw,
                 content_code=content_code,
@@ -404,6 +437,30 @@ class Video(Base):
             if lowered in {"0", "false", "no", "n", "off"}:
                 return False
         return None
+
+    @classmethod
+    def _sanitize_result(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            out: Dict[str, Any] = {}
+            for idx, (key, item) in enumerate(value.items()):
+                if idx >= cls.MAX_RESULT_ITEMS:
+                    out["__truncated__"] = f"dict items>{cls.MAX_RESULT_ITEMS}"
+                    break
+                out[str(key)] = cls._sanitize_result(item)
+            return out
+        if isinstance(value, list):
+            out_list = [cls._sanitize_result(item) for item in value[: cls.MAX_RESULT_ITEMS]]
+            if len(value) > cls.MAX_RESULT_ITEMS:
+                out_list.append(f"[truncated {len(value) - cls.MAX_RESULT_ITEMS} items]")
+            return out_list
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw.startswith("data:"):
+                return f"[omitted data uri len={len(value)}]"
+            if len(value) > cls.MAX_RESULT_STRING:
+                return value[: cls.MAX_RESULT_STRING] + f"...[truncated {len(value) - cls.MAX_RESULT_STRING} chars]"
+            return value
+        return value
 
     def _normalize_option(self, option: Dict[str, Any]) -> Dict[str, Any]:
         out: Dict[str, Any] = dict(option)

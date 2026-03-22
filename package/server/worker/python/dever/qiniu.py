@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -106,12 +107,12 @@ class Qiniu:
         timeout: int = 60,
     ) -> Dict[str, Any]:
         uid = self.get_uid_by_content_code(content_code)
-        ext = self.ext_from_url(source_url)
-        filename = self.filename_from_url(source_url)
+        ext = self.ext_from_source(source_url)
+        filename = self.filename_from_source(source_url)
         if not filename:
             filename = f"file_{index}{ext}"
         key = self.build_qiniu_key(uid=uid, prefix=prefix, filename=filename, ext=ext)
-        stored = self.upload_url(source_url, key, timeout=timeout)
+        stored = self.upload_source(source_url, key, timeout=timeout)
         self.save_user_file(
             uid=uid,
             key=stored["key"],
@@ -122,6 +123,11 @@ class Qiniu:
             file_type=file_type,
         )
         return stored
+
+    def upload_source(self, source: str, key: str, timeout: int = 60) -> Dict[str, Any]:
+        if self._is_data_uri(source):
+            return self.upload_data_uri(source, key, timeout=timeout)
+        return self.upload_url(source, key, timeout=timeout)
 
     def upload_url(self, source_url: str, key: str, timeout: int = 60) -> Dict[str, Any]:
         source = (source_url or "").strip()
@@ -139,6 +145,25 @@ class Qiniu:
                 body, uploaded_size = self._upload_by_chunks(key=key, stream_resp=file_resp, timeout=timeout)
             else:
                 body, uploaded_size = self._upload_by_form(key=key, stream_resp=file_resp, timeout=timeout)
+
+        out_key = str(body.get("key") or key)
+        file_hash = str(body.get("hash") or body.get("etag") or "").strip()
+        return {
+            "key": out_key,
+            "url": self.public_url(out_key),
+            "hash": file_hash,
+            "mime": mime,
+            "size": uploaded_size,
+            "raw": body,
+        }
+
+    def upload_data_uri(self, data_uri: str, key: str, timeout: int = 60) -> Dict[str, Any]:
+        mime, content = self._decode_data_uri(data_uri)
+        ext = self._ext_from_mime(mime)
+        if self._should_use_chunked_upload(ext=ext, mime=mime, size=len(content)):
+            body, uploaded_size = self._upload_bytes_by_chunks(key=key, content=content, timeout=timeout)
+        else:
+            body, uploaded_size = self._upload_bytes_by_form(key=key, content=content, timeout=timeout)
 
         out_key = str(body.get("key") or key)
         file_hash = str(body.get("hash") or body.get("etag") or "").strip()
@@ -172,6 +197,19 @@ class Qiniu:
         parsed = urlparse(str(url or ""))
         path = parsed.path or ""
         return os.path.basename(path).strip()
+
+    def ext_from_source(self, source: str) -> str:
+        raw = str(source or "").strip()
+        if self._is_data_uri(raw):
+            mime, _ = self._decode_data_uri(raw)
+            return self._ext_from_mime(mime)
+        return self.ext_from_url(raw)
+
+    def filename_from_source(self, source: str) -> str:
+        raw = str(source or "").strip()
+        if self._is_data_uri(raw):
+            return ""
+        return self.filename_from_url(raw)
 
     def _make_upload_token(self, key: str) -> str:
         deadline = int(time.time()) + max(self.token_ttl, 60)
@@ -223,6 +261,10 @@ class Qiniu:
     def _upload_by_form(self, key: str, stream_resp: requests.Response, timeout: int) -> tuple[Dict[str, Any], int]:
         token = self._make_upload_token(key)
         content = stream_resp.content
+        return self._upload_bytes_by_form(key=key, content=content, timeout=timeout)
+
+    def _upload_bytes_by_form(self, key: str, content: bytes, timeout: int) -> tuple[Dict[str, Any], int]:
+        token = self._make_upload_token(key)
         files = {"file": (key, content)}
         data = {"token": token, "key": key}
         upload_url = self._upload_host()
@@ -238,13 +280,21 @@ class Qiniu:
         return body, len(content)
 
     def _upload_by_chunks(self, key: str, stream_resp: requests.Response, timeout: int) -> tuple[Dict[str, Any], int]:
+        total_chunks = []
+        for chunk in stream_resp.iter_content(chunk_size=self.CHUNK_SIZE):
+            if chunk:
+                total_chunks.append(chunk)
+        return self._upload_bytes_by_chunks(key=key, content=b"".join(total_chunks), timeout=timeout)
+
+    def _upload_bytes_by_chunks(self, key: str, content: bytes, timeout: int) -> tuple[Dict[str, Any], int]:
         token = self._make_upload_token(key)
         upload_host = self._upload_host()
         headers = {"Authorization": f"UpToken {token}", "Content-Type": "application/octet-stream"}
         ctx_list: List[str] = []
         total_size = 0
 
-        for chunk in stream_resp.iter_content(chunk_size=self.CHUNK_SIZE):
+        for start in range(0, len(content), self.CHUNK_SIZE):
+            chunk = content[start : start + self.CHUNK_SIZE]
             if not chunk:
                 continue
             chunk_size = len(chunk)
@@ -301,6 +351,56 @@ class Qiniu:
             return int(value)
         except Exception:
             return 0
+
+    @staticmethod
+    def _is_data_uri(value: Any) -> bool:
+        return str(value or "").strip().startswith("data:")
+
+    @staticmethod
+    def _decode_data_uri(data_uri: str) -> tuple[str, bytes]:
+        raw = str(data_uri or "").strip()
+        if not raw.startswith("data:"):
+            raise WorkerError("无效的 data URI")
+        header, sep, payload = raw.partition(",")
+        if not sep:
+            raise WorkerError("无效的 data URI")
+        meta = header[5:]
+        parts = [x.strip() for x in meta.split(";") if x.strip()]
+        mime = parts[0] if parts and "/" in parts[0] else "application/octet-stream"
+        is_base64 = any(x.lower() == "base64" for x in parts[1:] if x)
+        if not is_base64:
+            raise WorkerError("暂不支持非 base64 的 data URI")
+        try:
+            content = base64.b64decode(payload, validate=True)
+        except binascii.Error as exc:
+            raise WorkerError("data URI base64 内容无效") from exc
+        if not content:
+            raise WorkerError("data URI 内容为空")
+        return mime, content
+
+    @staticmethod
+    def _ext_from_mime(mime: str) -> str:
+        mime_l = str(mime or "").strip().lower()
+        mapping = {
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+            "image/bmp": ".bmp",
+            "image/svg+xml": ".svg",
+            "video/mp4": ".mp4",
+            "video/quicktime": ".mov",
+            "video/webm": ".webm",
+            "audio/mpeg": ".mp3",
+            "audio/mp3": ".mp3",
+            "audio/wav": ".wav",
+            "audio/x-wav": ".wav",
+            "audio/ogg": ".ogg",
+            "audio/mp4": ".m4a",
+            "application/pdf": ".pdf",
+        }
+        return mapping.get(mime_l, ".bin")
 
 
     def save_user_file(
