@@ -37,6 +37,10 @@ return [
     'update' => [
         'start' => 'Shenzhu/Manage/Lib/Role.update',
         'end' => 'Shenzhu/Manage/Lib/Role.sync',
+        'tab' => [
+            '基本信息' => 'code,name,cate_id,system_id,memory,info',
+            '提示词设置' => 'prompt',
+        ],
         'field'    => [
             'code' => [
                 'desc' => '唯一标识，使用助理时将通过该标识调用，不能为空，请勿重复',
@@ -52,9 +56,10 @@ return [
                 'type' => 'select',
                 'rules' => true,
             ],
+            /*
             'model' => [
                 'desc' => '为空则使用默认模型，查询模型：opencode models',
-            ],
+            ],*/
             'memory' => [
                 'type' => 'radio',
             ],

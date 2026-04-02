@@ -30,10 +30,11 @@ return [
             'name'      => '描述',
             'type'      => 'varchar(128)',
         ],
+        /*
         'model' => [
             'name'      => '模型',
             'type'      => 'varchar(64)',
-        ],
+        ],*/
         'prompt' => [
             'name'      => '设定',
             'type'      => 'text',

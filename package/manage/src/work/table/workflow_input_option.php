@@ -10,7 +10,7 @@ return [
 
         'value' => [
             'name'      => '选项值',
-            'type'      => 'varchar(32)',
+            'type'      => 'varchar(3000)',
         ],
 
         'workflow_id' => [
@@ -23,6 +23,16 @@ return [
             'name'      => '工作流输入项ID',
             'type'      => 'bigint',
             'value'     => 'work/workflow_input',
+        ],
+
+        'type' => [
+            'name'      => '类型',
+            'type'      => 'tinyint(1)',
+            'default'   => 1,
+            'value'     => [
+                1 => '字符串',
+                2 => '数字',
+            ],
         ],
 
         'tag' => [

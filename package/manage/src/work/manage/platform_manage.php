@@ -3,6 +3,7 @@ return [
     'source' => 'work/platform',
     'list' => [
         'field'      => [
+            'id',
             'name',
             'host',
             'sort',

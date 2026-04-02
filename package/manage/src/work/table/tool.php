@@ -20,10 +20,6 @@ return [
             'name'      => '描述',
             'type'      => 'text',
         ],
-        'model' => [
-            'name'      => '平台模型',
-            'type'      => 'varchar(64)',
-        ],
         'sort' => [
             'name'      => '排序',
             'type'      => 'int(11)',

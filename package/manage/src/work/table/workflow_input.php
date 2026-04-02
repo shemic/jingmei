@@ -12,6 +12,7 @@ return [
             'type'      => 'bigint',
             'name'      => '工作流节点',
             'value'     => 'work/workflow_nodes',
+            'default'   => 0,
         ],
         'name' => [
             'name'      => '名称',

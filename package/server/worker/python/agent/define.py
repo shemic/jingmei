@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class Request(BaseModel):
     agent_code:  Optional[str] = None
+    model_code: Optional[str] = None
     project_code: Optional[str] = None
     app_code: Optional[str] = None
     workflow_code: Optional[str] = None

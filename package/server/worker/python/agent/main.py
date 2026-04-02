@@ -15,6 +15,7 @@ class Agent:
     def _request(raw: Dict[str, Any]) -> Request:
         data: Dict[str, Any] = {
             "agent_code": raw.get("agent_code"),
+            "model_code": raw.get("model_code"),
             "project_code": raw.get("project_code"),
             "app_code": raw.get("app_code"),
             "workflow_code": raw.get("workflow_code"),
@@ -30,7 +31,7 @@ class Agent:
         agent = self._get_agent()
         msg = self._build_messages(agent["system_prompt"])
         request = self.request.dict()
-        request["model_code"] = agent["model_code"]
+        request["model_code"] = str(self.request.model_code or agent["model_code"] or "").strip()
         request["input"] = msg
         result = LLM(request).execute()
         return Response(output=result.output, aigc=result.output["content"])
@@ -171,11 +172,51 @@ class Agent:
     def _get_agent(self) -> dict:
         table = Db.table("work_agent")
         agent = Db.find(f"SELECT * FROM {table} WHERE code = %s", [self.request.agent_code])
-        model = agent["model"].split(",")
+        model_code = str(self.request.model_code or "").strip()
+        if model_code:
+            agent["model_code"] = model_code
+            return agent
+
+        model_id = self._load_default_agent_model_id(agent)
+        if model_id <= 0:
+            model_id = self._parse_model_ref_id(agent.get("model"))
+        if model_id <= 0:
+            raise ValueError("智能体未配置模型")
+
         table = Db.table("work_model")
-        model = Db.find(f"SELECT * FROM {table} WHERE id = %s", [model[1]])
+        model = Db.find(f"SELECT * FROM {table} WHERE id = %s", [model_id])
         agent["model_code"] = model["code"]
         return agent
+
+    def _load_default_agent_model_id(self, agent: dict) -> int:
+        agent_id = self._parse_model_ref_id(agent.get("id"))
+        if agent_id <= 0:
+            return 0
+        table = Db.table("work_agent_model")
+        row = Db.find(
+            f"SELECT * FROM {table} WHERE agent_id = %s AND status = 1 ORDER BY sort ASC, id ASC LIMIT 1",
+            [agent_id],
+        )
+        if not isinstance(row, dict):
+            return 0
+        return self._parse_model_ref_id(row.get("model"))
+
+    @staticmethod
+    def _parse_model_ref_id(value: Any) -> int:
+        text = str(value or "").strip()
+        if not text:
+            return 0
+        for part in reversed(text.split(",")):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                parsed = int(part)
+            except Exception:
+                continue
+            if parsed > 0:
+                return parsed
+        return 0
     
     @staticmethod
     def _to_text(value: Any) -> str:

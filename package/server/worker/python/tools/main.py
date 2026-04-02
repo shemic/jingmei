@@ -4,6 +4,7 @@ from typing import Any, Dict, List
 from urllib.parse import urlparse
 
 from dever.core import Dever
+from dever.error import WorkerError
 from dever.pgsql import PgSQL as Db
 from tools.define import Request, Response
 
@@ -63,11 +64,9 @@ class Tools:
     def execute(self) -> Response:
         table = Db.table("work_tool")
         tool = Db.find(f"SELECT * FROM {table} WHERE code = %s", [self.request.tool_code])
-        model = tool["model"].split(",")
-        table = Db.table("work_platform")
-        platform = Db.find(f"SELECT * FROM {table} WHERE id = %s", [model[0]])
-        table = Db.table("work_model")
-        model = Db.find(f"SELECT * FROM {table} WHERE id = %s", [model[1]])
+        if not isinstance(tool, dict):
+            raise WorkerError("工具不存在")
+        platform, model = self._resolve_model_and_platform(tool)
         
         config = {
             "project_code": self.request.project_code,
@@ -93,6 +92,122 @@ class Tools:
                 "input": shemic_input,
             },
         )
+
+    @staticmethod
+    def _to_int(value: Any) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
+    @classmethod
+    def _parse_model_ref_id(cls, value: Any) -> int:
+        parsed = cls._to_int(value)
+        if parsed > 0:
+            return parsed
+        text = str(value or "").strip()
+        if not text:
+            return 0
+        for part in reversed(text.split(",")):
+            parsed = cls._to_int(part.strip())
+            if parsed > 0:
+                return parsed
+        return 0
+
+    def _resolve_model_and_platform(self, tool: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        model_id = self._extract_selected_model_id(self.request.input, self.request.meta)
+        if model_id <= 0:
+            model_id = self._load_default_tool_model_id(tool)
+        if model_id <= 0:
+            model_id = self._parse_model_ref_id(tool.get("model"))
+        if model_id <= 0:
+            raise WorkerError("工具未配置模型")
+
+        model_table = Db.table("work_model")
+        model = Db.find(f"SELECT * FROM {model_table} WHERE id = %s", [model_id])
+        if not isinstance(model, dict):
+            raise WorkerError("模型不存在")
+        model["params"] = self._load_model_params(model_id)
+
+        platform_id = self._to_int(model.get("platform_id"))
+        if platform_id <= 0:
+            raise WorkerError("模型缺少平台配置")
+
+        platform_table = Db.table("work_platform")
+        platform = Db.find(f"SELECT * FROM {platform_table} WHERE id = %s", [platform_id])
+        if not isinstance(platform, dict):
+            raise WorkerError("平台不存在")
+        return platform, model
+
+    def _load_default_tool_model_id(self, tool: Dict[str, Any]) -> int:
+        tool_id = self._to_int(tool.get("id"))
+        if tool_id <= 0:
+            return 0
+        table = Db.table("work_tool_model")
+        row = Db.find(
+            f"SELECT * FROM {table} WHERE tool_id = %s AND status = 1 ORDER BY id DESC LIMIT 1",
+            [tool_id],
+        )
+        if not isinstance(row, dict):
+            return 0
+        return self._parse_model_ref_id(row.get("model"))
+
+    def _load_model_params(self, model_id: int) -> List[Dict[str, Any]]:
+        if model_id <= 0:
+            return []
+        table = Db.table("work_model_param")
+        return Db.fetch(
+            f"SELECT * FROM {table} WHERE model_id = %s AND status = 1 ORDER BY id DESC",
+            [model_id],
+        )
+
+    def _extract_selected_model_id(self, input_payload: Any, meta: Any) -> int:
+        if not isinstance(input_payload, dict):
+            return 0
+        selections = self._normalize_model_selections(input_payload.get("model"))
+        if not selections:
+            return 0
+
+        meta_map = meta if isinstance(meta, dict) else {}
+        lookup_keys = [
+            str(meta_map.get("workflow_node_id") or "").strip(),
+            str(meta_map.get("node_id") or "").strip(),
+        ]
+        for key in lookup_keys:
+            if not key:
+                continue
+            selected = selections.get(key)
+            if not isinstance(selected, dict):
+                continue
+            model_id = self._to_int(selected.get("value"))
+            if model_id > 0:
+                return model_id
+        return 0
+
+    @staticmethod
+    def _normalize_model_selections(raw: Any) -> Dict[str, Dict[str, Any]]:
+        if raw is None:
+            return {}
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            items = [raw]
+        else:
+            return {}
+
+        out: Dict[str, Dict[str, Any]] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_id = str(item.get("id") or "").strip()
+            if item_id:
+                out[item_id] = item
+            for key, value in item.items():
+                node_id = str(key or "").strip()
+                if not node_id or not isinstance(value, dict):
+                    continue
+                out[node_id] = value
+        return out
 
     @staticmethod
     def _collect_urls(raw: Any) -> List[str]:

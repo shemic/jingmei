@@ -29,11 +29,19 @@ return [
             'show'      => '3',   
         ],
 
+        'model' => [
+            'parent'    => 'shenzhu_manage',
+            'name'      => '模型管理',
+            'icon'      => 'service-line',
+            'sort'      => '2',
+        ],
+
         'system' => [
             'parent'    => 'shenzhu_manage',
             'name'      => '系统管理',
             'icon'      => 'todo-line',
-            'sort'      => '2',
+            'sort'      => '3',
         ],
+        
     ],
 ];

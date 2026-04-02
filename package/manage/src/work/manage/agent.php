@@ -6,8 +6,13 @@ return [
             'name',
             'cate_id',
             'model' => [
-                'show' => 'Dever::call("Work/Manage/Lib/Model.getName", "{model}")',
+                'name' => '平台模型',
+                'show' => 'Dever::call("Work/Manage/Lib/Model.getSelectName", ["{id}", "agent_model", "agent_id"])',
             ],
+            /*
+            'model' => [
+                'show' => 'Dever::call("Work/Manage/Lib/Model.getName", "{model}")',
+            ],*/
             'sort',
             'status',
             'cdate',
@@ -34,6 +39,10 @@ return [
         ],
     ],
     'update' => [
+        'tab' => [
+            '基本信息' => 'code,name,cate_id,work/agent_model',
+            '提示词设置' => 'system_prompt',
+        ],
         'start' => 'Work/Manage/Lib/Common.update',
         'field'    => [
             'code' => [
@@ -47,10 +56,15 @@ return [
                 'rules' => true,
                 'option'    => 'Dever::call("Work/Manage/Lib/Common.getList", ["cate", ["type"=>2]])',
             ],
+            /*
             'model' => [
                 'rules' => true,
                 'type' => 'cascader',
                 'option' => 'Dever::call("Work/Manage/Lib/Model.getList", [1])',
+            ],*/
+            'work/agent_model' => [
+                'name' => '平台模型',
+                'where'  => ['agent_id' => 'id'],
             ],
             'system_prompt' => [
                 'rules' => true,

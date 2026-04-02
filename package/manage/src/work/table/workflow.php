@@ -1,7 +1,7 @@
 <?php
 return [
     'name' => '工作流表',
-    'order' => 'sort asc,id asc',
+    'order' => 'sort asc,id desc',
     'struct' => [
         'uid' => [
             'name' => '用户ID',
@@ -12,6 +12,12 @@ return [
             'name' => '分类',
             'type' => 'bigint',
             'value' => 'work/cate',   
+        ],
+        'workflow_id'       => [
+            'type'      => 'bigint',
+            'name'      => '关联工作流',
+            'value'     => 'work/workflow',
+            'default'   => 0,
         ],
         'name' => [
             'name'      => '名称',

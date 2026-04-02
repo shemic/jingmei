@@ -20,9 +20,10 @@ return [
             'name',
             'cate_id',
             'model' => [
-                'show' => 'Dever::call("Work/Manage/Lib/Model.getName", "{model}")',
+                'name' => '平台模型',
+                'show' => 'Dever::call("Work/Manage/Lib/Model.getSelectName", ["{id}", "tool_model", "tool_id"])',
             ],
-            'info',
+            //'info',
             'sort',
             'status',
             'cdate',
@@ -68,14 +69,19 @@ return [
                 'rules' => true,
                 'option'    => 'Dever::call("Work/Manage/Lib/Common.getList", ["cate", ["type"=>3]])',
             ],
+            /*
             'model' => [
                 'rules' => true,
                 'type' => 'cascader',
                 'option' => 'Dever::call("Work/Manage/Lib/Model.getList")',
-            ],
+            ],*/
             'info' => [
                 'type' => 'textarea',
                 'autosize' => ['minRows' => 4],
+            ],
+            'work/tool_model' => [
+                'name' => '平台模型',
+                'where'  => ['tool_id' => 'id'],
             ],
             /*
             'work/tool_param' => [

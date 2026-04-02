@@ -36,10 +36,11 @@ return [
             'type'      => 'varchar(64)',
             'default'   => 'LLM_TASK_QUEUE',
         ],
+        /*
         'model' => [
             'name'      => '平台模型',
             'type'      => 'varchar(64)',
-        ],
+        ],*/
         'system_prompt' => [
             'name'      => '系统提示词',
             'type'      => 'text',

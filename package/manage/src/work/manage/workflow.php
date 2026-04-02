@@ -50,7 +50,7 @@ return [
     ],
     'update' => [
         'tab' => [
-            '基本信息' => 'code,name,cate_id,shenzhu_role,out_type,icon,info',
+            '基本信息' => 'code,name,cate_id,workflow_id,shenzhu_role,out_type,icon,info',
             '提示设置' => 'is_text,tip,is_upload,upload_type',
         ],
         'start' => 'Work/Manage/Lib/Common.update',
@@ -66,6 +66,9 @@ return [
                 'desc' => '主要用于描述怎么给这个工作流传入参数',
                 'type' => 'textarea',
                 'autosize' => ['minRows' => 4],
+            ],
+            'workflow_id' => [
+                'desc' => '关联的工作流，选择后会自动复用该工作流的输入项',
             ],
             'cate_id' => [
                 'rules' => true,

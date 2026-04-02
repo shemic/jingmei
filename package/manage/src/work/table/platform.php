@@ -1,7 +1,7 @@
 <?php
 return [
     'name' => '平台表',
-    'order' => 'sort asc,id asc',
+    'order' => 'sort asc,id desc',
     'struct' => [
         'name' => [
             'name'      => '名称',

@@ -95,7 +95,7 @@ return [
 
         'model' => [
             'parent'    => 'work_manage',
-            'name'      => '大模型',
+            'name'      => '模型管理',
             'icon'      => 'dribbble-fill',
             'sort'      => '1',
         ],

@@ -1,6 +1,6 @@
 <?php
 return [
-    'name' => '工具配置',
+    'name' => '工具配置-废弃',
     'order' => 'id asc',
     'struct' => [
         'tool_id' => [

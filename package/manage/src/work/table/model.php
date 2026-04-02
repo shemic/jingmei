@@ -1,7 +1,7 @@
 <?php
 return [
     'name' => '模型表',
-    'order' => 'sort asc,id asc',
+    'order' => 'sort asc,id desc',
     'struct' => [
         'name' => [
             'name'      => '名称',
@@ -34,7 +34,7 @@ return [
 
         'model' => [
             'name'      => '接入名称',
-            'type'      => 'varchar(128)',
+            'type'      => 'text',
         ],
 
         'protocol' => [
@@ -44,6 +44,9 @@ return [
             'value'     => [
                 'http' => 'http',
                 'openai' => 'openai',
+                'doubao' => 'doubao',
+                'runninghubapi' => 'runninghubapi',
+                'runninghubflow' => 'runninghubflow',
             ],
         ],
 

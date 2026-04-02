@@ -101,7 +101,7 @@ class Provider(object):
 
     @staticmethod
     def _pick_status(value: Dict[str, Any]) -> str:
-        for key in ("status", "state", "task_status"):
+        for key in ("status", "state", "task_status", "taskStatus"):
             raw = value.get(key)
             if isinstance(raw, str) and raw:
                 return raw
@@ -118,9 +118,9 @@ class Provider(object):
         if isinstance(value, dict):
             for key, raw in value.items():
                 key_lower = str(key).lower()
-                if key_lower == "url" or key_lower.endswith("_url"):
+                if key_lower in {"url", "fileurl", "downloadurl"} or key_lower.endswith("_url"):
                     self._append_urls(raw, result)
-                elif key_lower.endswith("_urls"):
+                elif key_lower.endswith("_urls") or key_lower == "imageurls":
                     self._append_urls(raw, result)
                 else:
                     self._collect_urls_recursive(raw, result)

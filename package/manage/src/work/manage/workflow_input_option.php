@@ -5,7 +5,12 @@ return [
         'field'      => [
             'name',
             'value',
-            'info',
+            'type',
+            /*
+            'model' => [
+                'name' => '平台模型',
+                'show' => 'Dever::call("Work/Manage/Lib/Model.getSelectName", ["{id}", "workflow_input_option_model", "model_id"])',
+            ],*/
             'sort',
             'status',
             'cdate',
@@ -30,7 +35,10 @@ return [
             ],
             'value' => [
                 'rules' => true,
+                'type' => 'textarea',
+                'autosize' => ['minRows' => 4],
             ],
+            'type' => 'radio',
             'icon' => [
                 'desc' => '图标地址：https://lucide.dev/icons/',
             ],

@@ -35,6 +35,12 @@ return [
             'project' => [
                 'rules' => true,
             ],
+            'account' => [
+                
+            ],
+            'password' => [
+                
+            ],
             'type' => [
                 'rules' => true,
             ],

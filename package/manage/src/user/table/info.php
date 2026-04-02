@@ -54,10 +54,6 @@ return [
             'name'      => 'OpenID',
             'type'      => 'varchar(300)',
         ],
-        'open_id' => [
-            'name'      => 'OpenID',
-            'type'      => 'varchar(300)',
-        ],
         'sex' => [
             'name'      => '性别',
             'type'      => 'tinyint(1)',

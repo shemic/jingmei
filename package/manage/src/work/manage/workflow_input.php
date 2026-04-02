@@ -13,10 +13,13 @@ return [
             'cdate',
         ],
         'button' => [
-            '新增' => ['fastadd'],
+            //'新增' => ['fastadd', 'workflow_id,workflow_nodes_id,code,name,icon,type,source,default,must,search'],
+            '新增' => ['fastadd', ['field' => 'workflow_id,workflow_nodes_id,code,name,icon,type,source,default,must,search']],
         ],
         'data_button' => [
-            '编辑' => ['fastedit'],
+            '编辑' => ['fastedit', 'workflow_id,workflow_nodes_id,code,name,icon,type,source,default,must,search'],
+            '提示' => ['fastedit', 'tip_title,tip_pic,tip_desc'],
+            '模型' => ['fastedit', 'work/workflow_input_model'],
             '选项' => ['route', [
                 'path' => 'work_app_manage/workflow_input_option',
                 'param' => [
@@ -32,9 +35,10 @@ return [
         ],
     ],
     'update' => [
-        'tab' => [
+        'tab1' => [
             '基本信息' => 'workflow_id,workflow_nodes_id,code,name,icon,type,source,default,must,search',
             '提示设置' => 'tip_title,tip_pic,tip_desc',
+            '模型设置' => 'work/workflow_input_model',
         ],
         'control' => [
             'source' => 'type=list',
@@ -93,6 +97,12 @@ return [
             'tip_desc' => [
                 'type' => 'textarea',
                 'autosize' => ['minRows' => 4],
+            ],
+
+            'work/workflow_input_model' => [
+                'name' => '平台模型',
+                'desc' => '选择模型后，如果不选择选项，则所有选项有效。',
+                'where'  => ['workflow_input_id' => 'id'],
             ],
             
         ],

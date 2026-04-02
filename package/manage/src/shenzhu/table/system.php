@@ -19,6 +19,14 @@ return [
             'name'      => '项目路径',
             'type'      => 'varchar(500)',
         ],
+        'account' => [
+            'name'      => '账户',
+            'type'      => 'varchar(500)',
+        ],
+        'password' => [
+            'name'      => '密码',
+            'type'      => 'varchar(500)',
+        ],
         'type' => [
             'name'      => '类型',
             'type'      => 'varchar(32)',
