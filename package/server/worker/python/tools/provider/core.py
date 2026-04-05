@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Callable, Dict, List, Optional, Set
 import time
+from urllib.parse import urlparse
 import requests
 from dever.error import WorkerError
 
@@ -99,6 +100,24 @@ class Provider(object):
         self._collect_urls_recursive(payload, result)
         return result
 
+    def collect_video_urls(self, payload: Any) -> List[str]:
+        result: List[str] = []
+        self._collect_video_urls_recursive(payload, result, parent_key="")
+        return result
+
+    def extract_task_id(self, body: Dict[str, Any]) -> str:
+        for key in ("taskId", "task_id", "id"):
+            task_id = body.get(key)
+            if isinstance(task_id, (str, int)) and str(task_id).strip():
+                return str(task_id).strip()
+        data = body.get("data")
+        if isinstance(data, dict):
+            for key in ("taskId", "task_id", "id"):
+                task_id = data.get(key)
+                if isinstance(task_id, (str, int)) and str(task_id).strip():
+                    return str(task_id).strip()
+        return ""
+
     @staticmethod
     def _pick_status(value: Dict[str, Any]) -> str:
         for key in ("status", "state", "task_status", "taskStatus"):
@@ -140,3 +159,111 @@ class Provider(object):
         if isinstance(value, list):
             for item in value:
                 self._append_urls(item, result)
+
+    def _collect_video_urls_recursive(self, value: Any, result: List[str], parent_key: str) -> None:
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw.startswith(("http://", "https://")) and self._looks_like_video_url(raw, parent_key):
+                if raw not in result:
+                    result.append(raw)
+            return
+        if isinstance(value, list):
+            for item in value:
+                self._collect_video_urls_recursive(item, result, parent_key)
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                self._collect_video_urls_recursive(item, result, str(key))
+
+    @staticmethod
+    def _looks_like_video_url(url: str, key: str) -> bool:
+        key_l = str(key or "").lower()
+        if key_l in {"video_url", "video", "url"} or key_l.endswith("video_url") or key_l.endswith("video_urls"):
+            return True
+        lower = urlparse(url).path.lower()
+        return lower.endswith((".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".mpeg", ".mpg"))
+
+    @staticmethod
+    def uniq_strings(values: List[str]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for item in values:
+            value = str(item).strip()
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            out.append(value)
+        return out
+
+    @classmethod
+    def _normalize_media_values(cls, raw: Any) -> List[str]:
+        if raw is None:
+            return []
+        if isinstance(raw, str):
+            value = raw.strip()
+            return [value] if value else []
+        if isinstance(raw, dict):
+            out: List[str] = []
+            for value in raw.values():
+                out.extend(cls._normalize_media_values(value))
+            return cls.uniq_strings(out)
+        if isinstance(raw, (list, tuple, set)):
+            out: List[str] = []
+            for item in raw:
+                out.extend(cls._normalize_media_values(item))
+            return cls.uniq_strings(out)
+        return []
+
+    @classmethod
+    def _normalize_media_target_value(cls, values: Any, target_key: str) -> Any:
+        cleaned = cls.uniq_strings(cls._normalize_media_values(values))
+        if not cleaned:
+            return None
+        lowered = str(target_key or "").strip().lower()
+        if lowered.endswith("urls") or lowered in {"images", "videos", "audios"}:
+            return cleaned
+        return cleaned[0]
+
+    @classmethod
+    def _merge_mapped_field_value(cls, current: Any, new_value: Any) -> Any:
+        values = cls._normalize_media_values(current) + cls._normalize_media_values(new_value)
+        merged = cls.uniq_strings(values)
+        if not merged:
+            return current
+        if isinstance(current, list) or isinstance(new_value, list):
+            return merged
+        return merged[0]
+
+    @staticmethod
+    def _is_empty_field_value(value: Any) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, str):
+            return not value.strip()
+        if isinstance(value, (list, dict, tuple, set)):
+            return len(value) == 0
+        return False
+
+    @staticmethod
+    def to_positive_int(value: Any, default: int, field_name: str) -> int:
+        if value in (None, ""):
+            return default
+        try:
+            parsed = int(value)
+        except Exception as exc:
+            raise WorkerError(f"{field_name} 必须是整数") from exc
+        if parsed <= 0:
+            raise WorkerError(f"{field_name} 必须大于 0")
+        return parsed
+
+    @staticmethod
+    def to_non_negative_float(value: Any, default: float, field_name: str) -> float:
+        if value in (None, ""):
+            return default
+        try:
+            parsed = float(value)
+        except Exception as exc:
+            raise WorkerError(f"{field_name} 必须是数字") from exc
+        if parsed < 0:
+            raise WorkerError(f"{field_name} 必须大于等于 0")
+        return parsed

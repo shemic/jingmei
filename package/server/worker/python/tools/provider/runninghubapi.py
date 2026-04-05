@@ -19,96 +19,122 @@ class RunningHubAPI(Provider):
 
     def image(self, input: Any, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         _ = meta
-        if not isinstance(input, dict):
-            raise WorkerError("RunningHubAPI 图片入参必须是对象")
-
-        prompt = str(input.get("prompt", "")).strip()
-        if not prompt:
-            raise WorkerError("RunningHubAPI prompt 不能为空")
-
-        images = self._normalize_images(input.get("files"))
-        option = input.get("option") if isinstance(input.get("option"), dict) else {}
-        task_id = self._load_cached_task_id(input)
-        if task_id:
-            final_body = self._poll_result(task_id, {"taskId": task_id}, option, input, resource_name="图片")
-            return self._normalize_response(task_id, final_body)
-
-        submit_paths = self._resolve_submit_paths(input)
-        payload = self.build_image_payload(prompt=prompt, images=images, option=option)
-        created = self._submit_with_fallback(submit_paths, payload, "提交 RunningHubAPI 图片任务失败")
-
-        task_id = self.extract_task_id(created)
-        self._cache_task_id(input, task_id)
-        wait = bool(input.get("wait", True))
-        if not wait:
-            return self._normalize_response(task_id, created)
-
-        if self.collect_urls(created):
-            return self._normalize_response(task_id, created)
-
-        final_body = self._poll_result(task_id, created, option, input, resource_name="图片")
-        return self._normalize_response(task_id, final_body)
+        return self._run_task(
+            input,
+            resource_name="图片",
+            submit_error="提交 RunningHubAPI 图片任务失败",
+            submit_paths=self._resolve_submit_paths(input, "图片"),
+            payload_builder=self.build_image_payload,
+            ready_collector=self.collect_urls,
+            response_normalizer=self._normalize_response,
+        )
 
     def video(self, input: Any, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         _ = meta
+        return self._run_task(
+            input,
+            resource_name="视频",
+            submit_error="提交 RunningHubAPI 视频任务失败",
+            submit_paths=self._resolve_submit_paths(input, "视频"),
+            payload_builder=self.build_video_payload,
+            ready_collector=self.collect_video_urls,
+            response_normalizer=self._normalize_video_response,
+        )
+
+    def _run_task(
+        self,
+        input: Any,
+        *,
+        resource_name: str,
+        submit_error: str,
+        submit_paths: List[str],
+        payload_builder: Any,
+        ready_collector: Any,
+        response_normalizer: Any,
+    ) -> Dict[str, Any]:
         if not isinstance(input, dict):
-            raise WorkerError("RunningHubAPI 视频入参必须是对象")
+            raise WorkerError(f"RunningHubAPI {resource_name}入参必须是对象")
 
         prompt = str(input.get("prompt", "")).strip()
         if not prompt:
-            raise WorkerError("RunningHubAPI 视频 prompt 不能为空")
+            raise WorkerError(f"RunningHubAPI {resource_name} prompt 不能为空")
 
         images = self._normalize_images(input.get("files"))
-        option = input.get("option") if isinstance(input.get("option"), dict) else {}
+        option = self._option_map(input.get("option"))
+        media_sources = self._media_sources(input)
         task_id = self._load_cached_task_id(input)
         if task_id:
-            final_body = self._poll_result(task_id, {"taskId": task_id}, option, input, resource_name="视频")
-            return self._normalize_video_response(task_id, final_body)
+            final_body = self._poll_result(task_id, {"taskId": task_id}, option, input, resource_name=resource_name)
+            return response_normalizer(task_id, final_body)
 
-        submit_paths = self._resolve_video_submit_paths(input)
-        payload = self.build_video_payload(prompt=prompt, images=images, option=option)
-        created = self._submit_with_fallback(submit_paths, payload, "提交 RunningHubAPI 视频任务失败")
+        payload = payload_builder(
+            prompt=prompt,
+            images=images,
+            option=option,
+            media_fields=input.get("media_fields"),
+            media_sources=media_sources,
+            media_rules=input.get("media_rules"),
+        )
+        created = self._submit_with_fallback(submit_paths, payload, submit_error, input)
 
         task_id = self.extract_task_id(created)
         self._cache_task_id(input, task_id)
         wait = bool(input.get("wait", True))
         if not wait:
-            return self._normalize_video_response(task_id, created)
+            return response_normalizer(task_id, created)
 
-        if self._collect_video_urls(created):
-            return self._normalize_video_response(task_id, created)
+        if ready_collector(created):
+            return response_normalizer(task_id, created)
 
-        final_body = self._poll_result(task_id, created, option, input, resource_name="视频")
-        return self._normalize_video_response(task_id, final_body)
+        final_body = self._poll_result(task_id, created, option, input, resource_name=resource_name)
+        return response_normalizer(task_id, final_body)
 
     def query_outputs(self, task_id: str) -> Dict[str, Any]:
         payload = {"taskId": task_id}
         return self.request_json("POST", f"{self.host}{self.OUTPUTS_PATH}", payload=payload, timeout=60)
 
-    def build_image_payload(self, prompt: str, images: List[str], option: Dict[str, Any]) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"prompt": prompt}
-        if images:
-            payload["imageUrls"] = images
-
-        for key, value in option.items():
-            if key in {"model", "timeout", "interval", "size", "file"}:
-                continue
-            payload[key] = value
-
+    def build_image_payload(
+        self,
+        prompt: str,
+        images: List[str],
+        option: Dict[str, Any],
+        media_fields: Any = None,
+        media_sources: Optional[Dict[str, Any]] = None,
+        media_rules: Any = None,
+    ) -> Dict[str, Any]:
+        payload = self._build_payload(
+            prompt=prompt,
+            option=option,
+            images=images,
+            media_fields=media_fields,
+            media_sources=media_sources,
+            media_rules=media_rules,
+            ignored_keys={"model", "timeout", "interval", "size", "file"},
+            default_media=lambda items: {"imageUrls": items},
+        )
         payload["aspectRatio"] = self._resolve_aspect_ratio(payload, option)
         payload["resolution"] = self._resolve_resolution(payload, option)
         return payload
 
-    def build_video_payload(self, prompt: str, images: List[str], option: Dict[str, Any]) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"prompt": prompt}
-        if images:
-            payload["imageUrl"] = images[0]
-
-        for key, value in option.items():
-            if key in {"model", "timeout", "interval", "file", "image", "video", "audio", "ratio", "radio"}:
-                continue
-            payload[key] = value
-
+    def build_video_payload(
+        self,
+        prompt: str,
+        images: List[str],
+        option: Dict[str, Any],
+        media_fields: Any = None,
+        media_sources: Optional[Dict[str, Any]] = None,
+        media_rules: Any = None,
+    ) -> Dict[str, Any]:
+        payload = self._build_payload(
+            prompt=prompt,
+            option=option,
+            images=images,
+            media_fields=media_fields,
+            media_sources=media_sources,
+            media_rules=media_rules,
+            ignored_keys={"model", "timeout", "interval", "file", "image", "video", "audio", "ratio", "radio"},
+            default_media=lambda items: {"imageUrls": items, "imageUrl": items[0]},
+        )
         payload["aspectRatio"] = self._resolve_video_aspect_ratio(payload, option)
         if "duration" in payload and payload["duration"] not in (None, ""):
             payload["duration"] = str(payload["duration"]).strip()
@@ -116,33 +142,78 @@ class RunningHubAPI(Provider):
             payload["storyboard"] = False
         return payload
 
-    def extract_task_id(self, body: Dict[str, Any]) -> str:
-        for key in ("taskId", "task_id", "id"):
-            task_id = body.get(key)
-            if isinstance(task_id, (str, int)) and str(task_id).strip():
-                return str(task_id).strip()
+    def _build_payload(
+        self,
+        *,
+        prompt: str,
+        option: Dict[str, Any],
+        images: List[str],
+        media_fields: Any,
+        media_sources: Optional[Dict[str, Any]],
+        media_rules: Any,
+        ignored_keys: set[str],
+        default_media: Any,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"prompt": prompt}
+        mapped_media = self._resolve_media_fields(media_fields, media_sources, media_rules)
+        payload.update(mapped_media)
+        if images and not mapped_media:
+            payload.update(default_media(images))
+        self._merge_option_payload(payload, option, ignored_keys)
+        return payload
 
-        data = body.get("data")
-        if isinstance(data, dict):
-            for key in ("taskId", "task_id", "id"):
-                task_id = data.get(key)
-                if isinstance(task_id, (str, int)) and str(task_id).strip():
-                    return str(task_id).strip()
-        return ""
+    def _resolve_media_fields(
+        self,
+        media_fields: Any,
+        media_sources: Optional[Dict[str, Any]],
+        media_rules: Any,
+    ) -> Dict[str, Any]:
+        if isinstance(media_fields, dict) and media_fields:
+            return dict(media_fields)
+        if not isinstance(media_sources, dict):
+            return {}
+        rules = media_rules if isinstance(media_rules, list) else []
+        if not rules:
+            return {}
+
+        out: Dict[str, Any] = {}
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            media_type = str(rule.get("media_type") or "").strip().lower()
+            target = str(rule.get("target") or "").strip()
+            if not media_type or not target:
+                continue
+            values = self._normalize_media_values(media_sources.get(media_type))
+            if not values:
+                continue
+            index = rule.get("index")
+            if index not in (None, ""):
+                try:
+                    idx = int(index)
+                except Exception:
+                    continue
+                if idx < 0 or idx >= len(values):
+                    continue
+                values = [values[idx]]
+            mapped = self._normalize_media_target_value(values, target)
+            if self._is_empty_field_value(mapped):
+                continue
+            current = out.get(target)
+            if current is None:
+                out[target] = mapped
+                continue
+            out[target] = self._merge_mapped_field_value(current, mapped)
+        return out
 
     def _normalize_response(self, task_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        urls = self.collect_urls(body)
-        data = [{"url": url} for url in urls]
-        status = self.extract_status(body) or ("succeeded" if urls else "submitted")
-        return {
-            "task_id": task_id,
-            "status": status,
-            "result": body,
-            "data": data,
-        }
+        return self._normalize_task_response(task_id, body, self.collect_urls)
 
     def _normalize_video_response(self, task_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        urls = self._collect_video_urls(body)
+        return self._normalize_task_response(task_id, body, self.collect_video_urls)
+
+    def _normalize_task_response(self, task_id: str, body: Dict[str, Any], collector: Any) -> Dict[str, Any]:
+        urls = collector(body)
         data = [{"url": url} for url in urls]
         status = self.extract_status(body) or ("succeeded" if urls else "submitted")
         return {
@@ -176,21 +247,9 @@ class RunningHubAPI(Provider):
             if "失败" in msg or "错误" in msg or "error" in msg_lower or "failed" in msg_lower:
                 raise WorkerError(f"{prefix}: {msg}")
 
-    def _parse_image_path_candidates(self, raw: str) -> List[Tuple[str, str]]:
-        return self._parse_path_candidates(raw, "图片")
-
-    def _resolve_submit_paths(self, input_data: Dict[str, Any]) -> List[str]:
+    def _resolve_submit_paths(self, input_data: Dict[str, Any], resource_name: str) -> List[str]:
         return self._resolve_submit_path_list(
-            self._parse_image_path_candidates(str(input_data.get("model", "")).strip()),
-            bool(input_data.get("is_edit")),
-        )
-
-    def _parse_video_path_candidates(self, raw: str) -> List[Tuple[str, str]]:
-        return self._parse_path_candidates(raw, "视频")
-
-    def _resolve_video_submit_paths(self, input_data: Dict[str, Any]) -> List[str]:
-        return self._resolve_submit_path_list(
-            self._parse_video_path_candidates(str(input_data.get("model", "")).strip()),
+            self._parse_path_candidates(str(input_data.get("model", "")).strip(), resource_name),
             bool(input_data.get("is_edit")),
         )
 
@@ -234,9 +293,17 @@ class RunningHubAPI(Provider):
             raise WorkerError("RunningHubAPI 请求缺少可用接口 path")
         return paths
 
-    def _submit_with_fallback(self, submit_paths: List[str], payload: Dict[str, Any], prefix: str) -> Dict[str, Any]:
+    def _submit_with_fallback(
+        self,
+        submit_paths: List[str],
+        payload: Dict[str, Any],
+        prefix: str,
+        input_data: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         last_error: Optional[WorkerError] = None
+        last_submit_path = ""
         for index, submit_path in enumerate(submit_paths):
+            last_submit_path = submit_path
             try:
                 created = self.request_json("POST", self._openapi_url(submit_path), payload=payload, timeout=180)
                 self._raise_for_error(created, prefix)
@@ -244,10 +311,25 @@ class RunningHubAPI(Provider):
             except WorkerError as exc:
                 last_error = exc
                 if index >= len(submit_paths) - 1:
-                    raise
+                    raise WorkerError(
+                        f"{exc} | submit_path={submit_path} | raw_model={self._compact_value((input_data or {}).get('model'))}",
+                        retryable=exc.retryable,
+                        cause=exc,
+                    ) from exc
         if last_error is not None:
-            raise last_error
+            raise WorkerError(
+                f"{last_error} | submit_path={last_submit_path} | raw_model={self._compact_value((input_data or {}).get('model'))}",
+                retryable=last_error.retryable,
+                cause=last_error,
+            ) from last_error
         raise WorkerError(prefix)
+
+    @staticmethod
+    def _compact_value(value: Any) -> str:
+        text = str(value or "").strip()
+        if len(text) <= 500:
+            return text
+        return f"{text[:500]}..."
 
     def _poll_result(
         self,
@@ -257,8 +339,8 @@ class RunningHubAPI(Provider):
         input_data: Dict[str, Any],
         resource_name: str = "图片",
     ) -> Dict[str, Any]:
-        timeout = self._to_positive_int(option.get("timeout", input_data.get("timeout")), default=600, field_name="timeout")
-        interval = self._to_non_negative_float(option.get("interval", input_data.get("interval")), default=5.0, field_name="interval")
+        timeout = self.to_positive_int(option.get("timeout", input_data.get("timeout")), default=600, field_name="RunningHubAPI timeout")
+        interval = self.to_non_negative_float(option.get("interval", input_data.get("interval")), default=5.0, field_name="RunningHubAPI interval")
         start = time.monotonic()
         last_body = created
         while True:
@@ -279,14 +361,6 @@ class RunningHubAPI(Provider):
             self._raise_for_terminal_query_error(last_body, f"查询 RunningHubAPI {resource_name}结果失败")
             if interval > 0:
                 time.sleep(interval)
-
-    @staticmethod
-    def _is_running_response(body: Dict[str, Any]) -> bool:
-        code = str(body.get("code", "")).strip()
-        if code != "804":
-            return False
-        msg = str(body.get("msg") or body.get("message") or "").strip().upper()
-        return msg == "APIKEY_TASK_IS_RUNNING"
 
     def _raise_for_terminal_query_error(self, body: Dict[str, Any], prefix: str) -> None:
         status = self.extract_status(body).lower()
@@ -346,6 +420,25 @@ class RunningHubAPI(Provider):
     def _normalize_task_key(task_key: Any) -> str:
         return str(task_key or "").strip()
 
+    @staticmethod
+    def _option_map(option: Any) -> Dict[str, Any]:
+        return dict(option) if isinstance(option, dict) else {}
+
+    @staticmethod
+    def _media_sources(input_data: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "image": input_data.get("image"),
+            "video": input_data.get("video"),
+            "audio": input_data.get("audio"),
+        }
+
+    @staticmethod
+    def _merge_option_payload(payload: Dict[str, Any], option: Dict[str, Any], ignored_keys: set[str]) -> None:
+        for key, value in option.items():
+            if key in ignored_keys:
+                continue
+            payload[key] = value
+
     def _resolve_aspect_ratio(self, payload: Dict[str, Any], option: Dict[str, Any]) -> str:
         aspect_ratio = str(payload.get("aspectRatio", "")).strip()
         if aspect_ratio:
@@ -376,34 +469,6 @@ class RunningHubAPI(Provider):
         if not isinstance(raw, list):
             return []
         return [str(item).strip() for item in raw if str(item).strip()]
-
-    def _collect_video_urls(self, payload: Any) -> List[str]:
-        result: List[str] = []
-        self._collect_video_urls_recursive(payload, result, parent_key="")
-        return result
-
-    def _collect_video_urls_recursive(self, value: Any, result: List[str], parent_key: str) -> None:
-        if isinstance(value, str):
-            raw = value.strip()
-            if raw.startswith(("http://", "https://")) and self._looks_like_video_url(raw, parent_key):
-                if raw not in result:
-                    result.append(raw)
-            return
-        if isinstance(value, list):
-            for item in value:
-                self._collect_video_urls_recursive(item, result, parent_key)
-            return
-        if isinstance(value, dict):
-            for key, item in value.items():
-                self._collect_video_urls_recursive(item, result, str(key))
-
-    @staticmethod
-    def _looks_like_video_url(url: str, key: str) -> bool:
-        key_l = str(key or "").lower()
-        if key_l in {"video_url", "video", "url"} or key_l.endswith("video_url") or key_l.endswith("video_urls"):
-            return True
-        lower = url.lower().split("?", 1)[0]
-        return lower.endswith((".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".mpeg", ".mpg"))
 
     @staticmethod
     def _size_to_aspect_ratio(size: str) -> str:
@@ -436,27 +501,3 @@ class RunningHubAPI(Provider):
         if longest >= 2048:
             return "2K"
         return "1K"
-
-    @staticmethod
-    def _to_positive_int(value: Any, default: int, field_name: str) -> int:
-        if value in (None, ""):
-            return default
-        try:
-            parsed = int(value)
-        except Exception as exc:
-            raise WorkerError(f"RunningHubAPI {field_name} 必须是整数") from exc
-        if parsed <= 0:
-            raise WorkerError(f"RunningHubAPI {field_name} 必须大于 0")
-        return parsed
-
-    @staticmethod
-    def _to_non_negative_float(value: Any, default: float, field_name: str) -> float:
-        if value in (None, ""):
-            return default
-        try:
-            parsed = float(value)
-        except Exception as exc:
-            raise WorkerError(f"RunningHubAPI {field_name} 必须是数字") from exc
-        if parsed < 0:
-            raise WorkerError(f"RunningHubAPI {field_name} 必须大于等于 0")
-        return parsed

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -11,6 +10,8 @@ from tools.provider.core import Provider
 
 class Doubao(Provider):
     CREATE_PATH = "/contents/generations/tasks"
+    SEEDANCE_15_PRO_FLAG = "doubao-seedance-1-5-pro"
+    SEEDANCE_20_FLAG = "seedance-2-0"
 
     def image(self, input: Any, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         _ = meta
@@ -36,8 +37,8 @@ class Doubao(Provider):
         if not wait:
             return self._normalize_video_response(task_id, created)
 
-        timeout = self._to_positive_int(input.get("timeout"), default=600)
-        interval = self._to_non_negative_float(input.get("interval"), default=5.0)
+        timeout = self.to_positive_int(input.get("timeout"), default=600, field_name="豆包 timeout")
+        interval = self.to_non_negative_float(input.get("interval"), default=5.0, field_name="豆包 interval")
         final = self.poll_until_done(
             lambda: self.query_task(task_id),
             timeout=timeout,
@@ -62,8 +63,8 @@ class Doubao(Provider):
             status = self.extract_status(created) or "submitted"
             return {"task_id": task_id, "status": status, "result": created, "urls": self.collect_urls(created)}
 
-        timeout = self._to_positive_int(input.get("timeout"), default=600)
-        interval = self._to_non_negative_float(input.get("interval"), default=5.0)
+        timeout = self.to_positive_int(input.get("timeout"), default=600, field_name="豆包 timeout")
+        interval = self.to_non_negative_float(input.get("interval"), default=5.0, field_name="豆包 interval")
         final = self.poll_until_done(
             lambda: self.query_task(task_id),
             timeout=timeout,
@@ -74,17 +75,9 @@ class Doubao(Provider):
         return {"task_id": task_id, "status": status, "result": final, "urls": self.collect_urls(final)}
 
     def build_image_payload(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        model = str(input_data.get("model", "")).strip()
-        if not model:
-            raise WorkerError("豆包图片请求缺少 model")
-
-        prompt = str(input_data.get("prompt", "")).strip()
-        if not prompt:
-            raise WorkerError("prompt 不能为空")
-
-        option = input_data.get("option", {})
-        if not isinstance(option, dict):
-            option = {}
+        model = self._require_model(input_data, "豆包图片请求缺少 model")
+        prompt = self._require_prompt(input_data, "prompt 不能为空")
+        option = self._normalize_option_map(input_data.get("option"))
 
         payload: Dict[str, Any] = {
             "model": model,
@@ -96,10 +89,7 @@ class Doubao(Provider):
             "sequential_image_generation": "auto",
             "sequential_image_generation_options": {"max_images": 4},
         }
-        for key, value in option.items():
-            if key in {"model", "timeout", "interval", "file"}:
-                continue
-            payload[key] = value
+        self._merge_option_payload(payload, option, ignored={"model", "timeout", "interval", "file"})
 
         files = input_data.get("files")
         if isinstance(files, list) and files:
@@ -112,16 +102,9 @@ class Doubao(Provider):
         return payload
 
     def build_video_payload(self, input_data: Dict[str, Any], mode: str) -> Dict[str, Any]:
-        model = str(input_data.get("model", "")).strip()
-        if not model:
-            raise WorkerError("豆包视频请求缺少 model")
-
-        prompt = str(input_data.get("prompt", "")).strip()
-        if not prompt:
-            raise WorkerError("豆包视频 prompt 不能为空")
-
-        option = input_data.get("option")
-        option_map = dict(option) if isinstance(option, dict) else {}
+        model = self._require_model(input_data, "豆包视频请求缺少 model")
+        prompt = self._require_prompt(input_data, "豆包视频 prompt 不能为空")
+        option_map = self._normalize_option_map(input_data.get("option"))
         files = self._normalize_video_files(input_data.get("files"))
         if mode == "mention":
             if not files:
@@ -131,47 +114,20 @@ class Doubao(Provider):
                 "prompt": prompt,
                 "files": files,
             }
-            payload.update(option_map)
+            self._merge_option_payload(payload, option_map)
             return payload
 
-        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt}]
-        is_seedance_15_pro = "doubao-seedance-1-5-pro" in model.lower()
-        total = len(files)
-        if total == 1:
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": files[0]},
-                    "role": "first_frame",
-                }
-            )
-        elif total >= 2:
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": files[0]},
-                    "role": "first_frame",
-                }
-            )
-            content.append(
-                {
-                    "type": "image_url",
-                    "image_url": {"url": files[1]},
-                    "role": "last_frame",
-                }
-            )
-            if total > 2 and not is_seedance_15_pro:
-                for url in files[2:]:
-                    content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": url},
-                            "role": "reference_image",
-                        }
-                    )
-
-        payload = {"model": model, "content": content, "watermark": False}
-        payload.update(option_map)
+        media = self._collect_video_generation_media(input_data, files)
+        payload = {
+            "model": model,
+            "content": self._build_video_content(prompt, model, media),
+            "watermark": False,
+        }
+        self._merge_option_payload(
+            payload,
+            option_map,
+            ignored={"model", "timeout", "interval", "file", "image", "video", "audio", "ratio", "radio"},
+        )
         return payload
 
     def create_task(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -186,9 +142,7 @@ class Doubao(Provider):
         return self.request_json("POST", self._task_url(), payload=payload, timeout=60)
 
     def build_create_payload(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        model = input_data.get("model")
-        if not isinstance(model, str) or not model.strip():
-            raise WorkerError("豆包请求缺少 model")
+        model = self._require_model(input_data, "豆包请求缺少 model")
 
         content = input_data.get("content")
         if content is None:
@@ -198,7 +152,7 @@ class Doubao(Provider):
             raise WorkerError("豆包请求 content 必须是非空列表")
 
         payload: Dict[str, Any] = {
-            "model": model.strip(),
+            "model": model,
             "content": content,
         }
         extra = input_data.get("extra")
@@ -213,6 +167,12 @@ class Doubao(Provider):
             "images",
             "image",
             "image_url",
+            "videos",
+            "video",
+            "video_url",
+            "audios",
+            "audio",
+            "audio_url",
             "wait",
             "timeout",
             "interval",
@@ -225,43 +185,80 @@ class Doubao(Provider):
                 payload[key] = value
         return payload
 
-    def extract_task_id(self, body: Dict[str, Any]) -> str:
-        task_id = body.get("id") or body.get("task_id")
-        if isinstance(task_id, (str, int)):
-            return str(task_id)
-
-        data = body.get("data")
-        if isinstance(data, dict):
-            task_id = data.get("id") or data.get("task_id")
-            if isinstance(task_id, (str, int)):
-                return str(task_id)
-        return ""
-
     def _build_content_from_fields(self, input_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        prompt = input_data.get("prompt", input_data.get("text"))
-        if not isinstance(prompt, str) or not prompt.strip():
-            raise WorkerError("未提供 content 时，豆包请求必须提供 prompt")
-
-        content: List[Dict[str, Any]] = [{"type": "text", "text": prompt.strip()}]
+        prompt = self._require_prompt(input_data, "未提供 content 时，豆包请求必须提供 prompt")
+        content: List[Dict[str, Any]] = [self._text_content(prompt)]
         for image_url in self._normalize_images(input_data):
-            content.append({"type": "image_url", "image_url": {"url": image_url}})
+            content.append(self._url_content("image_url", image_url))
         return content
 
+    def _build_video_content(self, prompt: str, model: str, media: Dict[str, List[str]]) -> List[Dict[str, Any]]:
+        content: List[Dict[str, Any]] = [self._text_content(prompt)]
+        self._append_image_reference_content(content, media.get("image", []), model)
+        if self._supports_video_audio_reference(model):
+            self._append_reference_content(content, media.get("video", []), "video_url", "reference_video")
+            self._append_reference_content(content, media.get("audio", []), "audio_url", "reference_audio")
+        return content
+
+    def _collect_video_generation_media(self, input_data: Dict[str, Any], files: List[str]) -> Dict[str, List[str]]:
+        images = self.uniq_strings(files + self._collect_media_urls(input_data, "image"))
+        return {
+            "image": images,
+            "video": self._collect_media_urls(input_data, "video"),
+            "audio": self._collect_media_urls(input_data, "audio"),
+        }
+
+    def _collect_media_urls(self, input_data: Dict[str, Any], media_type: str) -> List[str]:
+        keys = [media_type, f"{media_type}s", f"{media_type}_url"]
+        out: List[str] = []
+        for key in keys:
+            if key not in input_data:
+                continue
+            self._append_url_like(input_data.get(key), out, field_name=key)
+        return self.uniq_strings(out)
+
+    def _append_image_reference_content(self, content: List[Dict[str, Any]], images: List[str], model: str) -> None:
+        if not images:
+            return
+        is_seedance_15_pro = self.SEEDANCE_15_PRO_FLAG in model.lower()
+        total = len(images)
+        if total == 1:
+            content.append(self._url_content("image_url", images[0], role="first_frame"))
+            return
+        content.append(self._url_content("image_url", images[0], role="first_frame"))
+        content.append(self._url_content("image_url", images[1], role="last_frame"))
+        if total > 2 and not is_seedance_15_pro:
+            for url in images[2:]:
+                content.append(self._url_content("image_url", url, role="reference_image"))
+
+    def _append_reference_content(
+        self,
+        content: List[Dict[str, Any]],
+        urls: List[str],
+        content_type: str,
+        role: str,
+    ) -> None:
+        for url in urls:
+            content.append(self._url_content(content_type, url, role=role))
+
+    @staticmethod
+    def _text_content(text: str) -> Dict[str, Any]:
+        return {"type": "text", "text": str(text or "").strip()}
+
+    @staticmethod
+    def _url_content(content_type: str, url: str, role: Optional[str] = None) -> Dict[str, Any]:
+        item: Dict[str, Any] = {
+            "type": content_type,
+            content_type: {"url": str(url or "").strip()},
+        }
+        if role:
+            item["role"] = role
+        return item
+
     def _normalize_images(self, input_data: Dict[str, Any]) -> List[str]:
-        raw_images: List[Any] = []
-        for key in ("images", "image"):
-            value = input_data.get(key)
-            if value is not None:
-                raw_images.append(value)
-        if input_data.get("image_url") is not None:
-            raw_images.append(input_data.get("image_url"))
+        return self._collect_media_urls(input_data, "image")
 
-        output: List[str] = []
-        for raw in raw_images:
-            self._append_image(raw, output)
-        return output
-
-    def _append_image(self, raw: Any, output: List[str]) -> None:
+    def _append_url_like(self, raw: Any, output: List[str], field_name: str = "url") -> None:
         if isinstance(raw, str):
             value = raw.strip()
             if value:
@@ -269,24 +266,54 @@ class Doubao(Provider):
             return
 
         if isinstance(raw, dict):
-            url = raw.get("url")
+            url = raw.get("url") or raw.get("src") or raw.get("value")
             if isinstance(url, str) and url.strip():
                 output.append(url.strip())
                 return
-            raise WorkerError("豆包图片对象必须包含非空 url")
+            raise WorkerError(f"豆包 {field_name} 对象必须包含非空 url")
 
         if isinstance(raw, list):
             for item in raw:
-                self._append_image(item, output)
+                self._append_url_like(item, output, field_name=field_name)
             return
 
-        raise WorkerError("豆包 images 必须是字符串、对象或列表")
+        raise WorkerError(f"豆包 {field_name} 必须是字符串、对象或列表")
+
+    @staticmethod
+    def _normalize_option_map(option: Any) -> Dict[str, Any]:
+        return dict(option) if isinstance(option, dict) else {}
+
+    @staticmethod
+    def _require_model(input_data: Dict[str, Any], message: str) -> str:
+        model = str(input_data.get("model", "")).strip()
+        if not model:
+            raise WorkerError(message)
+        return model
+
+    @staticmethod
+    def _require_prompt(input_data: Dict[str, Any], message: str) -> str:
+        prompt = input_data.get("prompt", input_data.get("text"))
+        text = str(prompt or "").strip()
+        if not text:
+            raise WorkerError(message)
+        return text
+
+    def _supports_video_audio_reference(self, model: str) -> bool:
+        return self.SEEDANCE_20_FLAG in str(model or "").strip().lower()
+
+    @staticmethod
+    def _merge_option_payload(payload: Dict[str, Any], option: Dict[str, Any], ignored: Optional[set[str]] = None) -> None:
+        skip = set(ignored or set())
+        for key, value in option.items():
+            if key in skip:
+                continue
+            payload[key] = value
 
     def _task_url(self) -> str:
         return f"{self.host}{self.CREATE_PATH}"
 
     def _normalize_video_response(self, task_id: str, body: Dict[str, Any]) -> Dict[str, Any]:
-        urls = self._collect_video_urls(body)
+        urls = self.collect_video_urls(body)
         data = [{"url": url} for url in urls]
         status = self.extract_status(body) or ("succeeded" if urls else "submitted")
         return {
@@ -301,40 +328,6 @@ class Doubao(Provider):
         if not isinstance(raw, list):
             return []
         return [str(item).strip() for item in raw if str(item).strip()]
-
-    def _collect_video_urls(self, body: Dict[str, Any]) -> List[str]:
-        result: List[str] = []
-        self._collect_video_urls_recursive(body, result, parent_key="")
-        dedup: List[str] = []
-        seen = set()
-        for url in result:
-            if url in seen:
-                continue
-            seen.add(url)
-            dedup.append(url)
-        return dedup
-
-    def _collect_video_urls_recursive(self, value: Any, result: List[str], parent_key: str) -> None:
-        if isinstance(value, str):
-            raw = value.strip()
-            if raw.startswith(("http://", "https://")) and self._looks_like_video_url(raw, parent_key):
-                result.append(raw)
-            return
-        if isinstance(value, list):
-            for item in value:
-                self._collect_video_urls_recursive(item, result, parent_key)
-            return
-        if isinstance(value, dict):
-            for key, item in value.items():
-                self._collect_video_urls_recursive(item, result, str(key))
-
-    @staticmethod
-    def _looks_like_video_url(url: str, key: str) -> bool:
-        key_l = str(key or "").lower()
-        if key_l in {"video_url", "video", "url"} or key_l.endswith("video_url") or key_l.endswith("video_urls"):
-            return True
-        suffix = urlparse(url).path.lower()
-        return suffix.endswith((".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".mpeg", ".mpg"))
 
     def _post_form(self, url: str, payload: Dict[str, Any], err_prefix: str) -> Dict[str, Any]:
         data: Dict[str, Any] = {}
@@ -361,27 +354,3 @@ class Doubao(Provider):
         if not isinstance(body, dict):
             raise WorkerError(f"{err_prefix}: 返回必须是JSON对象")
         return body
-
-    @staticmethod
-    def _to_positive_int(value: Any, default: int) -> int:
-        if value is None:
-            return default
-        try:
-            parsed = int(value)
-        except Exception as exc:
-            raise WorkerError("豆包 timeout 必须是整数") from exc
-        if parsed <= 0:
-            raise WorkerError("豆包 timeout 必须大于 0")
-        return parsed
-
-    @staticmethod
-    def _to_non_negative_float(value: Any, default: float) -> float:
-        if value is None:
-            return default
-        try:
-            parsed = float(value)
-        except Exception as exc:
-            raise WorkerError("豆包 interval 必须是数字") from exc
-        if parsed < 0:
-            raise WorkerError("豆包 interval 必须大于等于 0")
-        return parsed

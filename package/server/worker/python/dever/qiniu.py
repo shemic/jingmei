@@ -5,7 +5,6 @@ import binascii
 import hashlib
 import hmac
 import json
-import os
 import time
 from urllib.parse import quote, urlparse
 from typing import Any, Dict, List, Optional
@@ -58,23 +57,25 @@ class Qiniu:
         if clean_uid <= 0:
             raise WorkerError("uid 必须大于 0")
 
-        clean_filename = str(filename or "").strip()
-        base = clean_filename
-        if clean_filename:
-            base = os.path.splitext(clean_filename)[0].strip()
-        if not base:
-            base = "file"
-
-        raw_name = f"{clean_uid}_{base}"
-        name = raw_name
-        if "_cr_" not in base:
-            name = hashlib.md5(raw_name.encode("utf-8")).hexdigest()
+        name = self._generated_object_name(clean_uid, clean_prefix, ext)
 
         normalized_ext = self._normalize_ext(ext).lstrip(".")
         dir_parts = self._split_by_pairs(name, 3)
         dir_path = "/".join(dir_parts)
         uid_segment = self._uid_segment(clean_uid)
         return f"{clean_prefix}/{uid_segment}/{dir_path}/{name}.{normalized_ext}"
+
+    @staticmethod
+    def _generated_object_name(uid: int, prefix: str, ext: str) -> str:
+        raw = ":".join(
+            [
+                str(int(uid)),
+                str(prefix or "").strip(),
+                str(ext or "").strip(),
+                str(time.time_ns()),
+            ]
+        )
+        return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
     def get_uid_by_content_code(self, content_code: str) -> int:
         code = str(content_code or "").strip()
@@ -108,10 +109,7 @@ class Qiniu:
     ) -> Dict[str, Any]:
         uid = self.get_uid_by_content_code(content_code)
         ext = self.ext_from_source(source_url)
-        filename = self.filename_from_source(source_url)
-        if not filename:
-            filename = f"file_{index}{ext}"
-        key = self.build_qiniu_key(uid=uid, prefix=prefix, filename=filename, ext=ext)
+        key = self.build_qiniu_key(uid=uid, prefix=prefix, ext=ext)
         stored = self.upload_source(source_url, key, timeout=timeout)
         self.save_user_file(
             uid=uid,
@@ -192,24 +190,12 @@ class Qiniu:
             return ".jpg"
         return f".{ext}"
 
-    @staticmethod
-    def filename_from_url(url: str) -> str:
-        parsed = urlparse(str(url or ""))
-        path = parsed.path or ""
-        return os.path.basename(path).strip()
-
     def ext_from_source(self, source: str) -> str:
         raw = str(source or "").strip()
         if self._is_data_uri(raw):
             mime, _ = self._decode_data_uri(raw)
             return self._ext_from_mime(mime)
         return self.ext_from_url(raw)
-
-    def filename_from_source(self, source: str) -> str:
-        raw = str(source or "").strip()
-        if self._is_data_uri(raw):
-            return ""
-        return self.filename_from_url(raw)
 
     def _make_upload_token(self, key: str) -> str:
         deadline = int(time.time()) + max(self.token_ttl, 60)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import html
 import json
 import math
 import re
@@ -23,6 +24,8 @@ SKIP: Set[str] = {"text", "rich"}
 
 TAG_RE = re.compile(r"(?is)<shemic-(quote|file)\b([^>]*)>(.*?)</shemic-\1>")
 ATTR_RE = re.compile(r"([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*([\"'])(.*?)\2", re.S)
+HTML_BREAK_RE = re.compile(r"(?is)<\s*(br|/p|/div|/li|/tr|/h[1-6])\b[^>]*>")
+HTML_TAG_RE = re.compile(r"(?is)<[^>]+>")
 MAX_IMAGE_PIXELS = 16_777_216
 
 
@@ -75,6 +78,7 @@ class Prompt:
     def _build_input(prompt: str, file_raw: Any, option: Dict[str, Any], wanted: Set[str]) -> Dict[str, Any]:
         file_map = Prompt._parse_file_payload(file_raw)
         from_tags = Prompt._extract_from_tags(prompt, wanted)
+        clean_prompt = Prompt._normalize_prompt_text(Prompt._strip_shemic_tags(prompt))
 
         # 先取 shemic 标签，再与 input.file 去重合并
         merged: Dict[str, List[str]] = {}
@@ -89,7 +93,7 @@ class Prompt:
                 merged[t] = vals
 
         return {
-            "prompt": prompt,
+            "prompt": clean_prompt,
             "file": merged,
             "option": option,
         }
@@ -156,7 +160,7 @@ class Prompt:
             for v in typed_files.get(t, []):
                 add_file(v)
         return {
-            "prompt": new_prompt,
+            "prompt": Prompt._normalize_prompt_text(new_prompt),
             "file": files,
             "option": option,
         }
@@ -179,6 +183,36 @@ class Prompt:
             out.setdefault(t, []).extend(vals)
 
         return {k: Prompt._uniq(v) for k, v in out.items() if v}
+
+    @staticmethod
+    def _strip_shemic_tags(prompt: str) -> str:
+        text = str(prompt or "")
+        if not text or not Prompt.has_shemic_tags(text):
+            return text
+        return TAG_RE.sub("", text)
+
+    @staticmethod
+    def _normalize_prompt_text(prompt: str) -> str:
+        text = str(prompt or "")
+        if not text:
+            return ""
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        text = HTML_BREAK_RE.sub("\n", text)
+        text = HTML_TAG_RE.sub("", text)
+        text = html.unescape(text)
+
+        lines: List[str] = []
+        last_blank = True
+        for raw_line in text.split("\n"):
+            line = raw_line.strip()
+            if line:
+                lines.append(line)
+                last_blank = False
+                continue
+            if not last_blank:
+                lines.append("")
+            last_blank = True
+        return "\n".join(lines).strip()
 
     @staticmethod
     def _parse_file_payload(raw: Any) -> Dict[str, List[str]]:

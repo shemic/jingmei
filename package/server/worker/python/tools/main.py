@@ -67,7 +67,7 @@ class Tools:
         if not isinstance(tool, dict):
             raise WorkerError("工具不存在")
         platform, model = self._resolve_model_and_platform(tool)
-        
+
         config = {
             "project_code": self.request.project_code,
             "app_code": self.request.app_code,
@@ -117,6 +117,8 @@ class Tools:
     def _resolve_model_and_platform(self, tool: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, Any]]:
         model_id = self._extract_selected_model_id(self.request.input, self.request.meta)
         if model_id <= 0:
+            model_id = self._extract_default_model_id(self.request.meta)
+        if model_id <= 0:
             model_id = self._load_default_tool_model_id(tool)
         if model_id <= 0:
             model_id = self._parse_model_ref_id(tool.get("model"))
@@ -145,7 +147,7 @@ class Tools:
             return 0
         table = Db.table("work_tool_model")
         row = Db.find(
-            f"SELECT * FROM {table} WHERE tool_id = %s AND status = 1 ORDER BY id DESC LIMIT 1",
+            f"SELECT * FROM {table} WHERE tool_id = %s AND status = 1 ORDER BY sort ASC, id ASC LIMIT 1",
             [tool_id],
         )
         if not isinstance(row, dict):
@@ -208,6 +210,11 @@ class Tools:
                     continue
                 out[node_id] = value
         return out
+
+    def _extract_default_model_id(self, meta: Any) -> int:
+        if not isinstance(meta, dict):
+            return 0
+        return self._to_int(meta.get("default_model_id"))
 
     @staticmethod
     def _collect_urls(raw: Any) -> List[str]:
