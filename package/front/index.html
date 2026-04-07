@@ -17,8 +17,11 @@
   </script>
   <script>
     (function () {
+      var ua = (window.navigator.userAgent || '').toLowerCase();
+      var isFeishuClient = ua.indexOf('feishu') >= 0 || ua.indexOf('lark') >= 0;
       var shouldEnableFeishuDebug =
         window.location.search.indexOf('__feishu_debug__=1') >= 0 ||
+        isFeishuClient ||
         window.location.hostname === 'localhost' ||
         window.location.hostname === '127.0.0.1';
 
