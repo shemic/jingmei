@@ -8,7 +8,7 @@ return [
                 'option' => 'Dever::call("Work/Manage/Lib/Model.getList")',
             ],
         ],
-        'drag' => true,
+        'drag' => 'sort',
     ],
     
 ];
