@@ -10,7 +10,6 @@ from tools.provider.core import Provider
 
 class Doubao(Provider):
     CREATE_PATH = "/contents/generations/tasks"
-    SEEDANCE_15_PRO_FLAG = "doubao-seedance-1-5-pro"
     SEEDANCE_20_FLAG = "seedance-2-0"
 
     def image(self, input: Any, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -218,18 +217,19 @@ class Doubao(Provider):
         return self.uniq_strings(out)
 
     def _append_image_reference_content(self, content: List[Dict[str, Any]], images: List[str], model: str) -> None:
+        _ = model
         if not images:
             return
-        is_seedance_15_pro = self.SEEDANCE_15_PRO_FLAG in model.lower()
         total = len(images)
         if total == 1:
             content.append(self._url_content("image_url", images[0], role="first_frame"))
             return
-        content.append(self._url_content("image_url", images[0], role="first_frame"))
-        content.append(self._url_content("image_url", images[1], role="last_frame"))
-        if total > 2 and not is_seedance_15_pro:
-            for url in images[2:]:
-                content.append(self._url_content("image_url", url, role="reference_image"))
+        if total == 2:
+            content.append(self._url_content("image_url", images[0], role="first_frame"))
+            content.append(self._url_content("image_url", images[1], role="last_frame"))
+            return
+        for url in images:
+            content.append(self._url_content("image_url", url, role="reference_image"))
 
     def _append_reference_content(
         self,
@@ -299,6 +299,9 @@ class Doubao(Provider):
         return text
 
     def _supports_video_audio_reference(self, model: str) -> bool:
+        return self._is_seedance_20_model(model)
+
+    def _is_seedance_20_model(self, model: str) -> bool:
         return self.SEEDANCE_20_FLAG in str(model or "").strip().lower()
 
     @staticmethod

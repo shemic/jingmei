@@ -60,9 +60,9 @@ class Prompt:
                 return {"prompt": "", "file": [], "option": {}}
             return {"prompt": "", "file": {}, "option": {}}
 
-        prompt_text = str(input_data.get("prompt", input_data.get("input", "")) or "")
+        prompt_text = Prompt._stringify_prompt_value(input_data.get("prompt", input_data.get("input", "")))
         option = input_data.get("option")
-        out_option: Dict[str, Any] = Prompt._normalize_option(dict(option) if isinstance(option, dict) else {})
+        out_option: Dict[str, Any] = Prompt._normalize_option(option)
         wanted = Prompt._wanted(extract_types)
         file_raw = Prompt._resolve_file_raw(input_data)
 
@@ -280,11 +280,34 @@ class Prompt:
         return merged
 
     @staticmethod
-    def _normalize_option(option: Dict[str, Any]) -> Dict[str, Any]:
-        if not option:
+    def _normalize_option(option: Any) -> Dict[str, Any]:
+        data: Any = option
+        if data is None:
             return {}
 
-        out = dict(option)
+        if isinstance(data, str):
+            s = data.strip()
+            if not s:
+                return {}
+            s = (
+                s.replace("，", ",")
+                .replace("“", '"')
+                .replace("”", '"')
+                .replace("‘", "'")
+                .replace("’", "'")
+            )
+            try:
+                data = json.loads(s)
+            except Exception:
+                try:
+                    data = ast.literal_eval(s)
+                except Exception:
+                    return {}
+
+        if not isinstance(data, dict):
+            return {}
+
+        out = dict(data)
         size_raw = str(out.get("size", "") or "").strip().lower()
         cc_raw = str(out.get("cc", "") or "").strip()
         if size_raw and cc_raw:
@@ -301,6 +324,32 @@ class Prompt:
                     out["size"] = f"{scaled_width}x{scaled_height}"
         out.pop("cc", None)
         return out
+
+    @staticmethod
+    def _stringify_prompt_value(raw: Any) -> str:
+        if raw is None:
+            return ""
+        if isinstance(raw, str):
+            return raw
+        if isinstance(raw, (list, tuple)):
+            parts: List[str] = []
+            for item in raw:
+                text = Prompt._stringify_prompt_value(item).strip()
+                if text:
+                    parts.append(text)
+            return "\n".join(parts)
+        if isinstance(raw, dict):
+            for key in ("prompt", "input", "text", "content"):
+                if key not in raw:
+                    continue
+                text = Prompt._stringify_prompt_value(raw.get(key)).strip()
+                if text:
+                    return text
+            try:
+                return json.dumps(raw, ensure_ascii=False)
+            except Exception:
+                return str(raw)
+        return str(raw)
 
     @staticmethod
     def _fit_size_to_max_pixels(width: int, height: int) -> Tuple[int, int]:
