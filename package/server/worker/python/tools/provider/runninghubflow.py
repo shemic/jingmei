@@ -69,15 +69,15 @@ class RunningHubFlow(RunningHubAPI):
         for item in raw:
             if not isinstance(item, dict):
                 continue
-            node_id = str(item.get("nodeId", "")).strip()
-            field_name = str(item.get("fieldName", "")).strip()
+            node_id = str(item.get("nodeId") or item.get("nid") or "").strip()
+            field_name = str(item.get("fieldName") or item.get("value") or "").strip()
             if not node_id or not field_name:
                 continue
             out.append(
                 {
                     "nodeId": node_id,
                     "fieldName": field_name,
-                    "fieldValue": item.get("fieldValue"),
+                    "fieldValue": item.get("fieldValue", item.get("field_value")),
                 }
             )
         return out

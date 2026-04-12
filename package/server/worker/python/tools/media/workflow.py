@@ -31,11 +31,10 @@ class Workflow(Base):
         rows: List[Dict[str, Any]] = []
 
         for item in self._model_params():
-            field_name = str(item.get("name", "")).strip()
-            node_id = str(item.get("value", "")).strip()
+            source_field, field_name, node_id = self._resolve_workflow_param_binding(item)
             if not field_name or not node_id:
                 continue
-            field_value = self._resolve_field_value(field_name, prompt_text, option, media_map)
+            field_value = self._resolve_field_value(source_field, prompt_text, option, media_map)
             if self._is_empty_field_value(field_value):
                 continue
             rows.append(
@@ -47,6 +46,17 @@ class Workflow(Base):
             )
         return rows
 
+    @staticmethod
+    def _resolve_workflow_param_binding(item: Dict[str, Any]) -> tuple[str, str, str]:
+        source_field = str(item.get("name") or "").strip()
+        target_field = str(item.get("value") or "").strip()
+        node_id = str(item.get("nid") or "").strip()
+        if source_field and target_field and node_id:
+            return source_field, target_field, node_id
+        if source_field and target_field:
+            return source_field, source_field, target_field
+        return "", "", ""
+
     def _resolve_field_value(
         self,
         field_name: str,
@@ -55,8 +65,17 @@ class Workflow(Base):
         media_map: Dict[str, List[str]],
     ) -> Any:
         lowered = field_name.strip().lower()
-        if lowered == "text":
+        if lowered in {"text", "prompt", "input"}:
             return prompt_text
+        media_source = self._parse_media_source(field_name)
+        if media_source:
+            media_type, media_index = media_source
+            values = media_map.get(media_type, [])
+            if media_index is None:
+                return self._collapse_values(values)
+            if media_index < 0 or media_index >= len(values):
+                return None
+            return values[media_index]
         if lowered in MEDIA_FIELDS:
             return self._collapse_values(media_map.get(lowered, []))
         return self._resolve_option_value(option, field_name)

@@ -15,7 +15,7 @@ MEDIA_FIELDS = ("image", "video", "audio")
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".svg", ".heic", ".heif"}
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".mpeg", ".mpg"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", ".amr"}
-MEDIA_SOURCE_RE = re.compile(r"^(image|video|audio)(?:\[(\d+)\])?$", re.I)
+MEDIA_SOURCE_RE = re.compile(r"^(image|video|audio)(?:\[(\d+)\]|\.(\d+))?$", re.I)
 
 class Base(object):
     config = {}
@@ -163,7 +163,7 @@ class Base(object):
         if not matched:
             return None
         media_type = str(matched.group(1) or "").strip().lower()
-        index_text = str(matched.group(2) or "").strip()
+        index_text = str(matched.group(2) or matched.group(3) or "").strip()
         return media_type, int(index_text) if index_text else None
 
     @staticmethod

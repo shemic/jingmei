@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -62,11 +63,6 @@ class RunningHubAPI(Provider):
         images = self._normalize_images(input.get("files"))
         option = self._option_map(input.get("option"))
         media_sources = self._media_sources(input)
-        task_id = self._load_cached_task_id(input)
-        if task_id:
-            final_body = self._poll_result(task_id, {"taskId": task_id}, option, input, resource_name=resource_name)
-            return response_normalizer(task_id, final_body)
-
         payload = payload_builder(
             prompt=prompt,
             images=images,
@@ -75,19 +71,43 @@ class RunningHubAPI(Provider):
             media_sources=media_sources,
             media_rules=input.get("media_rules"),
         )
-        created = self._submit_with_fallback(submit_paths, payload, submit_error, input)
+        task_id, candidate_index = self._load_cached_task_state(input)
+        if task_id:
+            cached_index = self._clamp_candidate_index(candidate_index, len(submit_paths))
+            try:
+                final_body = self._poll_result(task_id, {"taskId": task_id}, option, input, resource_name=resource_name)
+                return response_normalizer(task_id, final_body)
+            except WorkerError as exc:
+                if cached_index >= len(submit_paths) - 1:
+                    cached_path = submit_paths[cached_index]
+                    raise WorkerError(
+                        f"{exc} | submit_path={cached_path} | raw_model={self._compact_value(input.get('model'))}",
+                        retryable=exc.retryable,
+                        cause=exc,
+                    ) from exc
+                self.clear_cached_task_id(input.get("task_key"))
+                return self._run_task_candidates(
+                    submit_paths=submit_paths,
+                    payload=payload,
+                    submit_error=submit_error,
+                    option=option,
+                    input_data=input,
+                    resource_name=resource_name,
+                    ready_collector=ready_collector,
+                    response_normalizer=response_normalizer,
+                    start_index=cached_index + 1,
+                )
 
-        task_id = self.extract_task_id(created)
-        self._cache_task_id(input, task_id)
-        wait = bool(input.get("wait", True))
-        if not wait:
-            return response_normalizer(task_id, created)
-
-        if ready_collector(created):
-            return response_normalizer(task_id, created)
-
-        final_body = self._poll_result(task_id, created, option, input, resource_name=resource_name)
-        return response_normalizer(task_id, final_body)
+        return self._run_task_candidates(
+            submit_paths=submit_paths,
+            payload=payload,
+            submit_error=submit_error,
+            option=option,
+            input_data=input,
+            resource_name=resource_name,
+            ready_collector=ready_collector,
+            response_normalizer=response_normalizer,
+        )
 
     def query_outputs(self, task_id: str) -> Dict[str, Any]:
         payload = {"taskId": task_id}
@@ -293,23 +313,41 @@ class RunningHubAPI(Provider):
             raise WorkerError("RunningHubAPI 请求缺少可用接口 path")
         return paths
 
-    def _submit_with_fallback(
+    def _run_task_candidates(
         self,
         submit_paths: List[str],
         payload: Dict[str, Any],
-        prefix: str,
-        input_data: Optional[Dict[str, Any]] = None,
+        submit_error: str,
+        option: Dict[str, Any],
+        input_data: Dict[str, Any],
+        resource_name: str,
+        ready_collector: Any,
+        response_normalizer: Any,
+        start_index: int = 0,
     ) -> Dict[str, Any]:
+        wait = bool(input_data.get("wait", True))
         last_error: Optional[WorkerError] = None
         last_submit_path = ""
-        for index, submit_path in enumerate(submit_paths):
+        start = self._clamp_candidate_index(start_index, len(submit_paths))
+        for index in range(start, len(submit_paths)):
+            submit_path = submit_paths[index]
             last_submit_path = submit_path
+            task_id = ""
             try:
-                created = self.request_json("POST", self._openapi_url(submit_path), payload=payload, timeout=180)
-                self._raise_for_error(created, prefix)
-                return created
+                created = self._submit_task(submit_path, payload, submit_error)
+                task_id = self.extract_task_id(created)
+                if task_id:
+                    self._cache_task_state(input_data, task_id, index)
+                if not wait:
+                    return response_normalizer(task_id, created)
+                if ready_collector(created):
+                    return response_normalizer(task_id, created)
+                final_body = self._poll_result(task_id, created, option, input_data, resource_name=resource_name)
+                return response_normalizer(task_id, final_body)
             except WorkerError as exc:
                 last_error = exc
+                if task_id:
+                    self.clear_cached_task_id(input_data.get("task_key"))
                 if index >= len(submit_paths) - 1:
                     raise WorkerError(
                         f"{exc} | submit_path={submit_path} | raw_model={self._compact_value((input_data or {}).get('model'))}",
@@ -322,7 +360,12 @@ class RunningHubAPI(Provider):
                 retryable=last_error.retryable,
                 cause=last_error,
             ) from last_error
-        raise WorkerError(prefix)
+        raise WorkerError(submit_error)
+
+    def _submit_task(self, submit_path: str, payload: Dict[str, Any], prefix: str) -> Dict[str, Any]:
+        created = self.request_json("POST", self._openapi_url(submit_path), payload=payload, timeout=180)
+        self._raise_for_error(created, prefix)
+        return created
 
     @staticmethod
     def _compact_value(value: Any) -> str:
@@ -376,22 +419,29 @@ class RunningHubAPI(Provider):
                 raise WorkerError(f"{prefix}: {value}", retryable=False)
 
     def _load_cached_task_id(self, input_data: Dict[str, Any]) -> str:
+        task_id, _ = self._load_cached_task_state(input_data)
+        return task_id
+
+    def _load_cached_task_state(self, input_data: Dict[str, Any]) -> Tuple[str, int]:
         task_id = str(input_data.get("task_id", "")).strip()
         if task_id:
-            return task_id
+            return task_id, 0
 
         task_key = self._normalize_task_key(input_data.get("task_key"))
         if not task_key:
-            return ""
+            return "", 0
         client = Redis.get()
         if client is None:
-            return ""
+            return "", 0
         try:
-            return str(client.get(Redis.key(task_key)) or "").strip()
+            return self._parse_cached_task_state(client.get(Redis.key(task_key)))
         except Exception:
-            return ""
+            return "", 0
 
     def _cache_task_id(self, input_data: Dict[str, Any], task_id: str) -> None:
+        self._cache_task_state(input_data, task_id, 0)
+
+    def _cache_task_state(self, input_data: Dict[str, Any], task_id: str, candidate_index: int = 0) -> None:
         task_key = self._normalize_task_key(input_data.get("task_key"))
         task_value = str(task_id or "").strip()
         if not task_key or not task_value:
@@ -400,7 +450,14 @@ class RunningHubAPI(Provider):
         if client is None:
             return
         try:
-            client.set(Redis.key(task_key), task_value, ex=self.TASK_CACHE_TTL)
+            payload = json.dumps(
+                {
+                    "task_id": task_value,
+                    "candidate_index": max(candidate_index, 0),
+                },
+                ensure_ascii=False,
+            )
+            client.set(Redis.key(task_key), payload, ex=self.TASK_CACHE_TTL)
         except Exception:
             return
 
@@ -419,6 +476,49 @@ class RunningHubAPI(Provider):
     @staticmethod
     def _normalize_task_key(task_key: Any) -> str:
         return str(task_key or "").strip()
+
+    @staticmethod
+    def _parse_cached_task_state(raw: Any) -> Tuple[str, int]:
+        text = RunningHubAPI._decode_cached_value(raw)
+        if not text:
+            return "", 0
+        try:
+            payload = json.loads(text)
+        except Exception:
+            return text, 0
+        if not isinstance(payload, dict):
+            return text, 0
+        task_id = str(payload.get("task_id") or payload.get("taskId") or "").strip()
+        if not task_id:
+            return "", 0
+        try:
+            candidate_index = int(payload.get("candidate_index", 0))
+        except Exception:
+            candidate_index = 0
+        return task_id, max(candidate_index, 0)
+
+    @staticmethod
+    def _decode_cached_value(raw: Any) -> str:
+        if isinstance(raw, bytes):
+            try:
+                return raw.decode("utf-8").strip()
+            except Exception:
+                return raw.decode(errors="ignore").strip()
+        return str(raw or "").strip()
+
+    @staticmethod
+    def _clamp_candidate_index(index: Any, count: int) -> int:
+        if count <= 0:
+            return 0
+        try:
+            parsed = int(index)
+        except Exception:
+            return 0
+        if parsed < 0:
+            return 0
+        if parsed >= count:
+            return count - 1
+        return parsed
 
     @staticmethod
     def _option_map(option: Any) -> Dict[str, Any]:

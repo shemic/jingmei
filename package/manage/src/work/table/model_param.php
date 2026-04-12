@@ -8,11 +8,15 @@ return [
             'value' => 'work/model',   
         ],
         'name' => [
-            'name'      => '字段名',
+            'name'      => '原字段',
             'type'      => 'varchar(256)',
         ],
         'value' => [
-            'name'      => '字段值',
+            'name'      => '模型字段',
+            'type'      => 'varchar(256)',
+        ],
+        'nid' => [
+            'name'      => '节点ID',
             'type'      => 'varchar(256)',
         ],
         'status' => [
