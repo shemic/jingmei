@@ -9,6 +9,7 @@ from tools.provider.runninghubapi import RunningHubAPI
 class RunningHubFlow(RunningHubAPI):
     CREATE_PATH = "/task/openapi/create"
     OUTPUTS_PATH = "/task/openapi/outputs"
+    DEFAULT_WORKFLOW_TIMEOUT = 3600
     EXTRA_OPTION_KEYS = {"addMetadata", "webhookUrl", "workflow", "instanceType", "usePersonalQueue"}
 
     def workflow(self, input: Any, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -20,7 +21,7 @@ class RunningHubFlow(RunningHubAPI):
         if not workflow_id:
             raise WorkerError("RunningHubFlow 缺少 workflowId")
 
-        option = input.get("option") if isinstance(input.get("option"), dict) else {}
+        option = self._workflow_option(input)
         task_id = self._load_cached_task_id(input)
         if task_id:
             final_body = self._poll_result(task_id, {"taskId": task_id}, option, input, resource_name="工作流")
@@ -45,6 +46,13 @@ class RunningHubFlow(RunningHubAPI):
     def query_outputs(self, task_id: str) -> Dict[str, Any]:
         payload = {"apiKey": self.token, "taskId": task_id}
         return self.request_json("POST", f"{self.host}{self.OUTPUTS_PATH}", payload=payload, timeout=60)
+
+    def _workflow_option(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        option = input_data.get("option") if isinstance(input_data.get("option"), dict) else {}
+        out = dict(option)
+        if "timeout" not in out and "timeout" not in input_data:
+            out["timeout"] = self.DEFAULT_WORKFLOW_TIMEOUT
+        return out
 
     def build_workflow_payload(self, workflow_id: str, node_info_list: Any, option: Dict[str, Any]) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
