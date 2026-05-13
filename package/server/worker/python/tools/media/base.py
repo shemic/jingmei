@@ -1,5 +1,7 @@
 from __future__ import annotations
+import hashlib
 import importlib
+import json
 import re
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
@@ -7,6 +9,7 @@ from urllib.parse import urlparse
 from dever.error import WorkerError
 from dever.prompt import Prompt
 from dever.qiniu import Qiniu
+from dever.redis import Redis
 from dever.task import TaskReporter
 from tools.provider.core import Provider
 
@@ -19,6 +22,8 @@ MEDIA_SOURCE_RE = re.compile(r"^(image|video|audio)(?:\[(\d+)\]|\.(\d+))?$", re.
 
 class Base(object):
     config = {}
+    RESULT_CACHE_TTL = 30 * 60
+    LARGE_RESULT_KEYS = {"b64_json", "base64", "image_base64", "content_base64"}
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         self.config: Dict[str, Any] = config or {}
@@ -55,6 +60,15 @@ class Base(object):
             task_key = self._build_task_key(provider_name, meta)
             if task_key:
                 data["task_key"] = task_key
+            result_cache_key = self._build_result_cache_key(method_name, provider_name, task_key, data)
+            cached = self._load_cached_result(result_cache_key)
+            if cached:
+                cached_task_id = str(cached.get("task_id", "")).strip()
+                if cached_task_id:
+                    reporter.set_task_id(cached_task_id)
+                reporter.emit(status="finish", progress=100, force=True)
+                return cached
+
             provider = self._create_provider(provider_name)
             handler = getattr(provider, method_name, None)
             if not callable(handler):
@@ -73,6 +87,8 @@ class Base(object):
             uploaded, aigc_urls = self._upload_rows(rows, reporter)
             body["uploaded"] = uploaded
             body["aigc"] = ",".join(aigc_urls)
+            body = self._sanitize_large_payload(body)
+            self._cache_result(result_cache_key, body)
             if task_key and hasattr(provider, "clear_cached_task_id"):
                 provider.clear_cached_task_id(task_key)
             reporter.emit(status="finish", progress=100, force=True)
@@ -323,13 +339,111 @@ class Base(object):
                 file_type=file_type,
                 index=idx,
             )
-            row["source_url"] = src_url
+            row["source_url"] = self._safe_source_url(src_url)
             row["url"] = stored["url"]
             row["qiniu_key"] = stored["key"]
             uploaded.append({"index": idx, "key": stored["key"], "url": stored["url"]})
             aigc_urls.append(stored["url"])
             reporter.emit(status="upload", progress=upload_start + int(((idx + 1) / total) * (98 - upload_start)))
         return uploaded, aigc_urls
+
+    def _build_result_cache_key(
+        self,
+        method_name: str,
+        provider_name: str,
+        task_key: str,
+        data: Dict[str, Any],
+    ) -> str:
+        if not task_key:
+            return ""
+        fingerprint = self._stable_payload_hash(data)
+        parts = ["tool_result", method_name, provider_name, task_key, fingerprint]
+        return ":".join(part for part in parts if part)
+
+    def _load_cached_result(self, cache_key: str) -> Dict[str, Any]:
+        if not cache_key:
+            return {}
+        try:
+            client = Redis.get()
+            if client is None:
+                return {}
+            raw = client.get(Redis.key(cache_key))
+            if not raw:
+                return {}
+            body = json.loads(raw)
+        except Exception:
+            return {}
+        return body if isinstance(body, dict) else {}
+
+    def _cache_result(self, cache_key: str, body: Dict[str, Any]) -> None:
+        if not cache_key or not isinstance(body, dict):
+            return
+        try:
+            client = Redis.get()
+            if client is None:
+                return
+            client.set(Redis.key(cache_key), json.dumps(body, ensure_ascii=False), ex=self.RESULT_CACHE_TTL)
+        except Exception:
+            return
+
+    @classmethod
+    def _stable_payload_hash(cls, data: Dict[str, Any]) -> str:
+        payload = cls._sanitize_cache_fingerprint(data)
+        try:
+            raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except Exception:
+            raw = str(payload)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+    @classmethod
+    def _sanitize_cache_fingerprint(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            out: Dict[str, Any] = {}
+            for key, item in value.items():
+                if key in {"task_key", "task_id", "timeout", "interval", "wait"}:
+                    continue
+                out[str(key)] = cls._sanitize_cache_fingerprint(item)
+            return out
+        if isinstance(value, list):
+            return [cls._sanitize_cache_fingerprint(item) for item in value]
+        if isinstance(value, str) and value.startswith("data:"):
+            digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+            return f"data-uri:{len(value)}:{digest}"
+        return value
+
+    @classmethod
+    def _sanitize_large_payload(cls, value: Any) -> Any:
+        if isinstance(value, dict):
+            out: Dict[str, Any] = {}
+            for key, item in value.items():
+                key_text = str(key)
+                if key_text.lower() in cls.LARGE_RESULT_KEYS and isinstance(item, str):
+                    out[key_text] = cls._redact_large_string(item, key_text)
+                    continue
+                out[key_text] = cls._sanitize_large_payload(item)
+            return out
+        if isinstance(value, list):
+            return [cls._sanitize_large_payload(item) for item in value]
+        if isinstance(value, str) and value.startswith("data:") and "[omitted " not in value:
+            return cls._redact_data_uri(value)
+        return value
+
+    @classmethod
+    def _safe_source_url(cls, value: str) -> str:
+        text = str(value or "").strip()
+        if text.startswith("data:"):
+            return cls._redact_data_uri(text)
+        return text
+
+    @staticmethod
+    def _redact_data_uri(value: str) -> str:
+        text = str(value or "")
+        header = text.split(",", 1)[0] if "," in text else "data:"
+        return f"{header},[omitted {len(text)} chars]"
+
+    @staticmethod
+    def _redact_large_string(value: str, label: str) -> str:
+        return f"[omitted {label} {len(str(value or ''))} chars]"
 
     def _extract_media_map(
         self,
