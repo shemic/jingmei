@@ -2,12 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from dever.pgsql import PgSQL as Db
 from dever.prompt import Prompt
 from tools.media.base import Base, MEDIA_FIELDS
-
-# WorkflowInputOption.Type=2 表示非字符串值，true/false 字面量需要传给下游为 bool。
-BOOL_OPTION_VALUES = {"true": True, "false": False}
 
 
 class Workflow(Base):
@@ -103,93 +99,3 @@ class Workflow(Base):
         if len(cleaned) == 1:
             return cleaned[0]
         return cleaned
-
-    def _normalize_typed_option_values(self, option: Dict[str, Any]) -> Dict[str, Any]:
-        option_map = dict(option) if isinstance(option, dict) else {}
-        if not option_map:
-            return option_map
-
-        bool_rules = self._load_bool_input_option_rules()
-        if not bool_rules:
-            return option_map
-
-        out = dict(option_map)
-        for key, value in option_map.items():
-            option_key = str(key or "").strip().lower()
-            value_key = self._bool_option_value_key(value)
-            if not option_key or not value_key:
-                continue
-            if value_key in bool_rules.get(option_key, {}):
-                out[key] = bool_rules[option_key][value_key]
-        return out
-
-    def _load_bool_input_option_rules(self) -> Dict[str, Dict[str, bool]]:
-        workflow_id = self._resolve_input_workflow_id()
-        if workflow_id <= 0:
-            return {}
-
-        input_table = Db.table("work_workflow_input")
-        option_table = Db.table("work_workflow_input_option")
-        rows = Db.fetch(
-            f"""
-            SELECT i.code, i.name, o.value
-            FROM {option_table} o
-            JOIN {input_table} i ON i.id = o.workflow_input_id
-            WHERE i.workflow_id = %s
-              AND i.status = 1
-              AND o.status = 1
-              AND o.type = 2
-            """,
-            [workflow_id],
-        )
-
-        rules: Dict[str, Dict[str, bool]] = {}
-        for row in rows:
-            value_key = self._bool_option_value_key(row.get("value"))
-            if not value_key:
-                continue
-            for field in (row.get("code"), row.get("name")):
-                field_key = str(field or "").strip().lower()
-                if not field_key:
-                    continue
-                rules.setdefault(field_key, {})[value_key] = BOOL_OPTION_VALUES[value_key]
-        return rules
-
-    def _resolve_input_workflow_id(self) -> int:
-        workflow_code = str(self.config.get("workflow_code") or "").strip()
-        if not workflow_code:
-            return 0
-
-        workflow_table = Db.table("work_workflow")
-        row = Db.find(
-            f"SELECT id, workflow_id FROM {workflow_table} WHERE code = %s AND status = 1 LIMIT 1",
-            [workflow_code],
-        )
-        if not isinstance(row, dict):
-            return 0
-
-        linked_id = self._to_int(row.get("workflow_id"))
-        if linked_id <= 0:
-            return self._to_int(row.get("id"))
-
-        linked = Db.find(
-            f"SELECT id FROM {workflow_table} WHERE id = %s AND status = 1 LIMIT 1",
-            [linked_id],
-        )
-        if isinstance(linked, dict):
-            return self._to_int(linked.get("id"))
-        return self._to_int(row.get("id"))
-
-    @staticmethod
-    def _bool_option_value_key(value: Any) -> str:
-        if not isinstance(value, str):
-            return ""
-        normalized = value.strip().lower()
-        return normalized if normalized in BOOL_OPTION_VALUES else ""
-
-    @staticmethod
-    def _to_int(value: Any) -> int:
-        try:
-            return int(value)
-        except Exception:
-            return 0

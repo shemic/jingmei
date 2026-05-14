@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
 from dever.error import WorkerError
+from dever.pgsql import PgSQL as Db
 from dever.prompt import Prompt
 from dever.qiniu import Qiniu
 from dever.redis import Redis
@@ -19,6 +20,8 @@ IMAGE_EXT = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", 
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".mpeg", ".mpg"}
 AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", ".amr"}
 MEDIA_SOURCE_RE = re.compile(r"^(image|video|audio)(?:\[(\d+)\]|\.(\d+))?$", re.I)
+BOOL_OPTION_VALUES = {"true": True, "false": False}
+
 
 class Base(object):
     config = {}
@@ -236,6 +239,104 @@ class Base(object):
         self._load_provider_class(provider_name)
         return provider_name
 
+    def _normalize_typed_option_values(self, option: Dict[str, Any]) -> Dict[str, Any]:
+        option_map = dict(option) if isinstance(option, dict) else {}
+        if not option_map:
+            return option_map
+
+        bool_rules = self._load_bool_input_option_rules()
+        if not bool_rules:
+            return option_map
+
+        out = dict(option_map)
+        for key, value in option_map.items():
+            option_key = str(key or "").strip().lower()
+            value_key = self._bool_option_value_key(value)
+            if not option_key or not value_key:
+                continue
+            if value_key in bool_rules.get(option_key, {}):
+                out[key] = bool_rules[option_key][value_key]
+        return out
+
+    def _load_bool_input_option_rules(self) -> Dict[str, Dict[str, bool]]:
+        workflow_id = self._resolve_input_workflow_id()
+        if workflow_id <= 0:
+            return {}
+
+        input_table = Db.table("work_workflow_input")
+        option_table = Db.table("work_workflow_input_option")
+        rows = Db.fetch(
+            f"""
+            SELECT i.code, i.name, o.value
+            FROM {option_table} o
+            JOIN {input_table} i ON i.id = o.workflow_input_id
+            WHERE i.workflow_id = %s
+              AND i.status = 1
+              AND o.status = 1
+              AND o.type = 2
+            """,
+            [workflow_id],
+        )
+
+        rules: Dict[str, Dict[str, bool]] = {}
+        for row in rows:
+            value_key = self._bool_option_value_key(row.get("value"))
+            if not value_key:
+                continue
+            for field in (row.get("code"), row.get("name")):
+                field_key = str(field or "").strip().lower()
+                if not field_key:
+                    continue
+                rules.setdefault(field_key, {})[value_key] = BOOL_OPTION_VALUES[value_key]
+        return rules
+
+    def _resolve_input_workflow_id(self) -> int:
+        workflow_code = str(self.config.get("workflow_code") or "").strip()
+        if not workflow_code:
+            return 0
+
+        workflow_table = Db.table("work_workflow")
+        row = Db.find(
+            f"SELECT id, workflow_id FROM {workflow_table} WHERE code = %s AND status = 1 LIMIT 1",
+            [workflow_code],
+        )
+        if not isinstance(row, dict):
+            return 0
+
+        linked_id = self._to_int(row.get("workflow_id"))
+        if linked_id <= 0:
+            return self._to_int(row.get("id"))
+
+        linked = Db.find(
+            f"SELECT id FROM {workflow_table} WHERE id = %s AND status = 1 LIMIT 1",
+            [linked_id],
+        )
+        if isinstance(linked, dict):
+            return self._to_int(linked.get("id"))
+        return self._to_int(row.get("id"))
+
+    @staticmethod
+    def _bool_option_value_key(value: Any) -> str:
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)):
+            if value == 1:
+                return "true"
+            if value == 0:
+                return "false"
+            return ""
+        if not isinstance(value, str):
+            return ""
+        normalized = value.strip().lower()
+        return normalized if normalized in BOOL_OPTION_VALUES else ""
+
+    @staticmethod
+    def _to_int(value: Any) -> int:
+        try:
+            return int(value)
+        except Exception:
+            return 0
+
     def _load_provider_class(self, provider_name: str) -> Any:
         name = str(provider_name or "").strip().lower()
         if not name:
@@ -295,6 +396,7 @@ class Base(object):
         option = prepared.get("option", {})
         if not isinstance(option, dict):
             option = {}
+        option = self._normalize_typed_option_values(option)
         media_map = self._extract_media_map(input_data, option, prepared.get("file"), extract_types=types)
         return model, mode, prepared, option, media_map
 
