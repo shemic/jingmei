@@ -20,6 +20,10 @@ from dever.task import TaskReporter
 IMAGE_EXT = {
     ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".svg", ".heic", ".heif",
 }
+VIDEO_EXT = {
+    ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".mpeg", ".mpg",
+}
+DOCUMENT_EXT = {".pdf"}
 
 _task_ctx_var: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
     "provider_task_ctx",
@@ -229,24 +233,31 @@ class Provider(object):
             text = value.get("text")
         text = "" if text is None else text
 
-        images = cls._extract_image_files(value.get("file"))
-        if not images:
+        attachments = cls._extract_file_content_items(value.get("file"))
+        if not attachments:
             return text
 
-        content = [{"type": "input_image", "image_url": image_url} for image_url in images]
+        content = list(attachments)
         text_value = str(text or "").strip()
         if text_value:
             content.append({"type": "input_text", "text": text_value})
         return content
 
     @classmethod
-    def _extract_image_files(cls, file_value: Any) -> List[str]:
-        images: List[str] = []
+    def _extract_file_content_items(cls, file_value: Any) -> List[Dict[str, str]]:
+        items: List[Dict[str, str]] = []
         for file_name in cls._parse_files(file_value):
             normalized = file_name.strip()
-            if normalized and cls._file_ext(normalized) in IMAGE_EXT:
-                images.append(normalized)
-        return images
+            if not normalized:
+                continue
+            ext = cls._file_ext(normalized)
+            if ext in IMAGE_EXT:
+                items.append({"type": "input_image", "image_url": normalized})
+            elif ext in VIDEO_EXT:
+                items.append({"type": "input_video", "video_url": normalized})
+            elif ext in DOCUMENT_EXT:
+                items.append({"type": "input_file", "file_url": normalized})
+        return items
 
     @staticmethod
     def _parse_files(file_value: Any) -> List[str]:

@@ -17,6 +17,7 @@ AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", ".amr"}
 OFFICE_EXT = {
     ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv",
 }
+DOCUMENT_EXT = {".pdf"}
 
 class Agent:
     def __init__(self, request: Dict[str, Any]):
@@ -60,11 +61,11 @@ class Agent:
     def _build_user_content(self, raw: Any, original_raw: Any) -> Any:
         text = self._to_text(raw)
         files = original_raw.get("file") if isinstance(original_raw, dict) else None
-        images = self._extract_image_files(files)
-        if not images:
+        attachments = self._extract_file_content_items(files)
+        if not attachments:
             return text
 
-        content = [{"type": "input_image", "image_url": image_url} for image_url in images]
+        content = list(attachments)
         if text.strip():
             content.append({"type": "input_text", "text": text})
         return content
@@ -109,7 +110,7 @@ class Agent:
                 videos.append(normalized)
             elif ext in AUDIO_EXT:
                 audios.append(normalized)
-            elif ext == ".pdf":
+            elif ext in DOCUMENT_EXT:
                 pdfs.append(normalized)
             elif ext in OFFICE_EXT:
                 office.append(normalized)
@@ -127,13 +128,20 @@ class Agent:
             sections.append(f"pdf = [{','.join(pdfs)}]")
         return "\n".join(sections)
 
-    def _extract_image_files(self, file_value: Any) -> list[str]:
-        images: list[str] = []
+    def _extract_file_content_items(self, file_value: Any) -> list[dict[str, str]]:
+        items: list[dict[str, str]] = []
         for file_name in self._parse_files(file_value):
             normalized = file_name.strip()
-            if normalized and self._file_ext(normalized) in IMAGE_EXT:
-                images.append(normalized)
-        return images
+            if not normalized:
+                continue
+            ext = self._file_ext(normalized)
+            if ext in IMAGE_EXT:
+                items.append({"type": "input_image", "image_url": normalized})
+            elif ext in VIDEO_EXT:
+                items.append({"type": "input_video", "video_url": normalized})
+            elif ext in DOCUMENT_EXT:
+                items.append({"type": "input_file", "file_url": normalized})
+        return items
 
     def _extract_options(self, option_value: Any) -> list[tuple[str, str]]:
         parsed = option_value

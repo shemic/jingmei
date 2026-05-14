@@ -82,10 +82,16 @@ class Openai(Provider):
         if isinstance(value, str):
             return value.strip()
         if isinstance(value, dict):
-            for key in ("url", "image_url", "video_url", "audio_url", "src"):
+            for key in ("url", "image_url", "video_url", "file_url", "audio_url", "src"):
                 url = str(value.get(key) or "").strip()
                 if url:
                     return url
+        return ""
+
+    @staticmethod
+    def _extract_file_id(value: Any) -> str:
+        if isinstance(value, dict):
+            return str(value.get("file_id") or "").strip()
         return ""
 
     @classmethod
@@ -155,10 +161,31 @@ class Openai(Provider):
             return {"type": "input_text", "text": text} if text else None
 
         if part_type in {"image_url", "input_image"} or "image_url" in part:
+            file_id = cls._extract_file_id(part)
+            if file_id:
+                return {"type": "input_image", "file_id": file_id}
             image_url = cls._extract_url(part.get("image_url") or part.get("url"))
             if not image_url:
                 return None
             return {"type": "input_image", "image_url": image_url}
+
+        if part_type in {"video_url", "input_video"} or "video_url" in part:
+            file_id = cls._extract_file_id(part)
+            if file_id:
+                return {"type": "input_video", "file_id": file_id}
+            video_url = cls._extract_url(part.get("video_url") or part.get("url"))
+            if not video_url:
+                return None
+            return {"type": "input_video", "video_url": video_url}
+
+        if part_type in {"file_url", "input_file"} or "file_url" in part or "file_id" in part:
+            file_id = cls._extract_file_id(part)
+            if file_id:
+                return {"type": "input_file", "file_id": file_id}
+            file_url = cls._extract_url(part.get("file_url") or part.get("url"))
+            if not file_url:
+                return None
+            return {"type": "input_file", "file_url": file_url}
 
         text = cls._content_text(part).strip()
         return {"type": "input_text", "text": text} if text else None
@@ -198,7 +225,9 @@ class Openai(Provider):
     def _content_has_media(cls, content: Any) -> bool:
         if isinstance(content, dict):
             part_type = str(content.get("type") or "").strip().lower()
-            if part_type in {"input_image", "image_url", "input_video", "video_url", "input_audio", "audio_url"}:
+            if part_type in {"input_image", "image_url", "input_video", "video_url", "input_file", "file_url", "input_audio", "audio_url"}:
+                return True
+            if any(key in content for key in ("image_url", "video_url", "file_url", "file_id")):
                 return True
             return any(cls._content_has_media(value) for value in content.values())
         if isinstance(content, list):
