@@ -7,6 +7,17 @@ from dever.pgsql import PgSQL as Db
 from agent.define import Request, Response
 from llm.main import LLM
 
+IMAGE_EXT = {
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".svg", ".heic", ".heif",
+}
+VIDEO_EXT = {
+    ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".mpeg", ".mpg",
+}
+AUDIO_EXT = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", ".amr"}
+OFFICE_EXT = {
+    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv",
+}
+
 class Agent:
     def __init__(self, request: Dict[str, Any]):
         self.request = self._request(request)
@@ -43,8 +54,20 @@ class Agent:
             raw = raw.get("input")
         return [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": self._to_text(raw)},
+            {"role": "user", "content": self._build_user_content(raw, self.request.input)},
         ]
+
+    def _build_user_content(self, raw: Any, original_raw: Any) -> Any:
+        text = self._to_text(raw)
+        files = original_raw.get("file") if isinstance(original_raw, dict) else None
+        images = self._extract_image_files(files)
+        if not images:
+            return text
+
+        content = [{"type": "input_image", "image_url": image_url} for image_url in images]
+        if text.strip():
+            content.append({"type": "input_text", "text": text})
+        return content
 
     def _build_system_prompt(self, system_prompt: Any, raw_input: Any) -> str:
         prompt = self._to_text(system_prompt) or "You are a helpful assistant."
@@ -77,31 +100,18 @@ class Agent:
         office = []
         pdfs = []
 
-        image_ext = {
-            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".svg", ".heic", ".heif",
-        }
-        video_ext = {
-            ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm", ".m4v", ".3gp", ".mpeg", ".mpg",
-        }
-        audio_ext = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma", ".amr"}
-        office_ext = {
-            ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv",
-        }
-
         for file_name in files:
             normalized = file_name.strip()
-            suffix = normalized.lower().split("?", 1)[0].split("#", 1)[0]
-            dot = suffix.rfind(".")
-            ext = suffix[dot:] if dot != -1 else ""
-            if ext in image_ext:
+            ext = self._file_ext(normalized)
+            if ext in IMAGE_EXT:
                 images.append(normalized)
-            elif ext in video_ext:
+            elif ext in VIDEO_EXT:
                 videos.append(normalized)
-            elif ext in audio_ext:
+            elif ext in AUDIO_EXT:
                 audios.append(normalized)
             elif ext == ".pdf":
                 pdfs.append(normalized)
-            elif ext in office_ext:
+            elif ext in OFFICE_EXT:
                 office.append(normalized)
 
         sections = []
@@ -116,6 +126,14 @@ class Agent:
         if pdfs:
             sections.append(f"pdf = [{','.join(pdfs)}]")
         return "\n".join(sections)
+
+    def _extract_image_files(self, file_value: Any) -> list[str]:
+        images: list[str] = []
+        for file_name in self._parse_files(file_value):
+            normalized = file_name.strip()
+            if normalized and self._file_ext(normalized) in IMAGE_EXT:
+                images.append(normalized)
+        return images
 
     def _extract_options(self, option_value: Any) -> list[tuple[str, str]]:
         parsed = option_value
@@ -168,6 +186,12 @@ class Agent:
                     result.append(item.strip())
             return result
         return []
+
+    @staticmethod
+    def _file_ext(file_name: str) -> str:
+        suffix = str(file_name or "").strip().lower().split("?", 1)[0].split("#", 1)[0]
+        dot = suffix.rfind(".")
+        return suffix[dot:] if dot != -1 else ""
     
     def _get_agent(self) -> dict:
         table = Db.table("work_agent")

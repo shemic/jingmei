@@ -17,6 +17,10 @@ from dever.publisher import Publisher, RedisPublisher
 from dever.result import ResultContext, ResultFactory
 from dever.task import TaskReporter
 
+IMAGE_EXT = {
+    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".tiff", ".tif", ".svg", ".heic", ".heif",
+}
+
 _task_ctx_var: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
     "provider_task_ctx",
     default=None,
@@ -184,6 +188,7 @@ class Provider(object):
         """
         平台统一输入：
         - list[{"role","content"}]
+        - dict{"input"|"prompt"|"text","file"}，其中图片 file 会转为多模态 content parts
         - dict{"role","content"}
         - other -> {"role":"user","content":str(x)}
         """
@@ -195,18 +200,69 @@ class Provider(object):
                     continue
 
                 role = str(m.get("role") or "user").strip().lower()
-                content = m.get("content")
-                content = "" if content is None else content
+                if "role" in m or "content" in m:
+                    content = m.get("content")
+                    content = "" if content is None else content
+                else:
+                    content = self._content_from_input_map(m)
 
                 out.append({"role": role, "content": content})
             return out
 
         if isinstance(msg, dict):
-            role = str(msg.get("role") or "user").strip().lower()
-            content = msg.get("content")
-            content = "" if content is None else content
+            if "role" in msg or "content" in msg:
+                role = str(msg.get("role") or "user").strip().lower()
+                content = msg.get("content")
+                content = "" if content is None else content
+            else:
+                role = "user"
+                content = self._content_from_input_map(msg)
             return [{"role": role, "content": content}]
         return [{"role": "user", "content": str(msg)}]
+
+    @classmethod
+    def _content_from_input_map(cls, value: Dict[str, Any]) -> Any:
+        text = value.get("input")
+        if text is None:
+            text = value.get("prompt")
+        if text is None:
+            text = value.get("text")
+        text = "" if text is None else text
+
+        images = cls._extract_image_files(value.get("file"))
+        if not images:
+            return text
+
+        content = [{"type": "input_image", "image_url": image_url} for image_url in images]
+        text_value = str(text or "").strip()
+        if text_value:
+            content.append({"type": "input_text", "text": text_value})
+        return content
+
+    @classmethod
+    def _extract_image_files(cls, file_value: Any) -> List[str]:
+        images: List[str] = []
+        for file_name in cls._parse_files(file_value):
+            normalized = file_name.strip()
+            if normalized and cls._file_ext(normalized) in IMAGE_EXT:
+                images.append(normalized)
+        return images
+
+    @staticmethod
+    def _parse_files(file_value: Any) -> List[str]:
+        if file_value is None:
+            return []
+        if isinstance(file_value, str):
+            return [item.strip() for item in file_value.split(",") if item.strip()]
+        if isinstance(file_value, list):
+            return [item.strip() for item in file_value if isinstance(item, str) and item.strip()]
+        return []
+
+    @staticmethod
+    def _file_ext(file_name: str) -> str:
+        suffix = str(file_name or "").strip().lower().split("?", 1)[0].split("#", 1)[0]
+        dot = suffix.rfind(".")
+        return suffix[dot:] if dot != -1 else ""
 
     # ---------------- usage normalize ----------------
 
