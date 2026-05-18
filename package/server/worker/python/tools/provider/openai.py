@@ -15,11 +15,19 @@ from tools.provider.core import Provider
 
 
 class OpenAI(Provider):
-    DEFAULT_HOST = "https://api.kuai.host"
+    DEFAULT_HOST = "https://www.packyapi.com/v1"
     GENERATIONS_PATH = "images/generations"
     EDITS_PATH = "images/edits"
     DEFAULT_MODEL = "gpt-image-2"
+    DEFAULT_REQUEST_TIMEOUT = 3600
+    DEFAULT_EDIT_REQUEST_TIMEOUT = 3600
     DOWNLOAD_TIMEOUT = 60
+    PACKY_HOSTS = {"packyapi.com", "www.packyapi.com"}
+    DEFAULT_IMAGE_FIELDS = {
+        "n": 1,
+        "response_format": "url",
+        "output_format": "png",
+    }
 
     CONTROL_KEYS = {
         "model",
@@ -39,9 +47,26 @@ class OpenAI(Provider):
         "interval",
         "task_key",
         "task_id",
+        "stream",
+        "partial_images",
+        "style",
     }
-    IGNORED_OPTION_KEYS = {"model", "file", "files", "image", "timeout", "interval"}
+    IGNORED_OPTION_KEYS = {
+        "model",
+        "file",
+        "files",
+        "image",
+        "timeout",
+        "interval",
+        "stream",
+        "partial_images",
+        "style",
+    }
     DATA_URI_RE = re.compile(r"^data:(?P<mime>[^;,]+)?(?:;[^,]+)*;base64,(?P<body>.+)$", re.I | re.S)
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        super().__init__(config)
+        self.header["Accept"] = "*/*"
 
     def image(self, input: Any, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         _ = meta
@@ -82,7 +107,8 @@ class OpenAI(Provider):
         option: Dict[str, Any],
     ) -> Dict[str, Any]:
         payload = self._build_json_payload(model, prompt, input_data, option)
-        return self.request_json("POST", self._api_url(self.GENERATIONS_PATH), payload=payload, timeout=180)
+        timeout = self._request_timeout(input_data, option, self.DEFAULT_REQUEST_TIMEOUT)
+        return self.request_json("POST", self._api_url(self.GENERATIONS_PATH), payload=payload, timeout=timeout)
 
     def _create_image_edit(
         self,
@@ -99,11 +125,13 @@ class OpenAI(Provider):
         image_files = self._build_upload_files("image", images)
         mask = self._extract_mask(input_data, option)
         mask_files = self._build_upload_files("mask", [mask]) if mask else []
+        timeout = self._request_timeout(input_data, option, self.DEFAULT_EDIT_REQUEST_TIMEOUT)
         return self._post_multipart(
             self._api_url(self.EDITS_PATH),
             fields,
             image_files + mask_files,
             "OpenAI 图生图请求失败",
+            timeout,
         )
 
     def _build_json_payload(
@@ -115,6 +143,7 @@ class OpenAI(Provider):
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"model": model, "prompt": prompt}
         self._merge_request_fields(payload, input_data, option)
+        self._apply_image_defaults(payload)
         return payload
 
     def _build_form_fields(
@@ -126,6 +155,7 @@ class OpenAI(Provider):
     ) -> Dict[str, str]:
         payload: Dict[str, Any] = {"model": model, "prompt": prompt}
         self._merge_request_fields(payload, input_data, option)
+        self._apply_image_defaults(payload)
         payload.pop("mask", None)
         return {key: self._stringify_form_value(value) for key, value in payload.items() if value not in (None, "")}
 
@@ -183,11 +213,15 @@ class OpenAI(Provider):
         data: Dict[str, str],
         files: List[Tuple[str, Tuple[str, bytes, str]]],
         error_prefix: str,
+        timeout: int,
     ) -> Dict[str, Any]:
         headers = dict(self.header)
         headers.pop("Content-Type", None)
-        headers["Accept"] = "application/json"
-        res = requests.post(url, headers=headers, data=data, files=files, timeout=180)
+        headers["Accept"] = "*/*"
+        try:
+            res = requests.post(url, headers=headers, data=data, files=files, timeout=timeout)
+        except requests.RequestException as exc:
+            raise WorkerError(f"{error_prefix}: {exc}", retryable=True, cause=exc) from exc
         if not res.ok:
             preview = (res.text or "").strip()[:500]
             raise WorkerError(f"{error_prefix}: status={res.status_code}, body={preview}")
@@ -199,6 +233,10 @@ class OpenAI(Provider):
         if not isinstance(body, dict):
             raise WorkerError(f"{error_prefix}: 返回必须是JSON对象")
         return body
+
+    def _apply_image_defaults(self, payload: Dict[str, Any]) -> None:
+        for key, value in self.DEFAULT_IMAGE_FIELDS.items():
+            payload.setdefault(key, value)
 
     def _build_upload_files(self, field_name: str, sources: List[str]) -> List[Tuple[str, Tuple[str, bytes, str]]]:
         out: List[Tuple[str, Tuple[str, bytes, str]]] = []
@@ -220,7 +258,10 @@ class OpenAI(Provider):
         raise WorkerError("OpenAI 图生图 image 必须是 URL、data URI 或可访问的本地文件")
 
     def _load_url_source(self, url: str, index: int) -> Tuple[str, bytes, str]:
-        res = requests.get(url, timeout=self.DOWNLOAD_TIMEOUT)
+        try:
+            res = requests.get(url, timeout=self.DOWNLOAD_TIMEOUT)
+        except requests.RequestException as exc:
+            raise WorkerError(f"下载 OpenAI 图生图 image 失败: {exc}", retryable=True, cause=exc) from exc
         if not res.ok:
             raise WorkerError(f"下载 OpenAI 图生图 image 失败: status={res.status_code}")
         mime = self._normalize_mime(res.headers.get("Content-Type"), url)
@@ -254,6 +295,12 @@ class OpenAI(Provider):
             if text:
                 return text
         return ""
+
+    def _request_timeout(self, input_data: Dict[str, Any], option: Dict[str, Any], default: int) -> int:
+        for value in (input_data.get("timeout"), option.get("timeout")):
+            if value not in (None, ""):
+                return self.to_positive_int(value, default=default, field_name="OpenAI 图片 timeout")
+        return default
 
     def _resolve_model_candidates(self, raw_model: Any, is_edit: bool) -> List[str]:
         candidates = self._parse_model_candidates(str(raw_model or "").strip())
@@ -293,9 +340,20 @@ class OpenAI(Provider):
 
     def _api_url(self, path: str) -> str:
         normalized = "/" + str(path or "").strip().lstrip("/")
-        if self.host.endswith("/v1") and normalized.startswith("/v1/"):
+        host = self._api_host()
+        if host.endswith("/v1") and normalized.startswith("/v1/"):
             normalized = normalized[3:]
-        return f"{self.host}{normalized}"
+        return f"{host}{normalized}"
+
+    def _api_host(self) -> str:
+        host = self.host.rstrip("/")
+        parsed = urlparse(host)
+        if parsed.netloc.lower() not in self.PACKY_HOSTS:
+            return host
+        path = parsed.path.rstrip("/")
+        if path.endswith("/v1"):
+            return host
+        return f"{host}/v1"
 
     def _collect_b64_data_uris(self, value: Any) -> List[str]:
         out: List[str] = []
